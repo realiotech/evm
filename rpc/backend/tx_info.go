@@ -43,8 +43,10 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 	}
 
 	// the `res.MsgIndex` is inferred from tx index, should be within the bound.
-	msg, ok := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
-	if !ok {
+	rawMsg := tx.GetMsgs()[res.MsgIndex]
+	msg, err := extractEthereumLikeMsgReflective(rawMsg)
+	if err != nil {
+		b.logger.Debug("message is not an Ethereum-like transaction", "type", fmt.Sprintf("%T", rawMsg), "index", res.MsgIndex)
 		return nil, errors.New("invalid ethereum tx")
 	}
 
@@ -80,7 +82,7 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 
 	height := uint64(res.Height)    //#nosec G115 -- checked for int overflow already
 	index := uint64(res.EthTxIndex) //#nosec G115 -- checked for int overflow already
-	return rpctypes.NewTransactionFromMsg(
+	return NewTransactionFromEthereumLikeMsg(
 		msg,
 		common.BytesToHash(block.BlockID.Hash.Bytes()),
 		height,
@@ -162,10 +164,17 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 		return nil, fmt.Errorf("failed to decode tx: %w", err)
 	}
 
-	ethMsg := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
-
-	txData, err := evmtypes.UnpackTxData(ethMsg.Data)
+	msg := tx.GetMsgs()[res.MsgIndex]
+	ethMsg, err := extractEthereumLikeMsgReflective(msg)
 	if err != nil {
+		fmt.Println("error: ", err)
+		b.logger.Debug("message is not an Ethereum-like transaction", "type", fmt.Sprintf("%T", msg), "index", res.MsgIndex)
+		return nil, nil
+	}
+
+	txData, err := ethMsg.GetTxData()
+	if err != nil {
+		fmt.Println("error Calling GetTxData: ", err)
 		b.logger.Error("failed to unpack tx data", "error", err.Error())
 		return nil, err
 	}

@@ -254,6 +254,14 @@ func (msg MsgEthereumTx) GetGas() uint64 {
 	return txData.GetGas()
 }
 
+func (msg MsgEthereumTx) GetData() *codectypes.Any {
+	return msg.Data
+}
+
+func (msg MsgEthereumTx) GetTxData() (TxData, error) {
+	return UnpackTxData(msg.Data)
+}
+
 // GetFee returns the fee for non dynamic fee tx
 func (msg MsgEthereumTx) GetFee() *big.Int {
 	txData, err := UnpackTxData(msg.Data)
