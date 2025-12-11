@@ -155,13 +155,13 @@ func MakeHeader(
 // NewTransactionFromMsg returns a transaction that will serialize to the RPC
 // representation, with the given location metadata set (if available).
 func NewTransactionFromMsg(
-	msg *evmtypes.MsgEthereumTx,
+	msg *ethtypes.Transaction,
 	blockHash common.Hash,
 	blockNumber, blockTime, index uint64,
 	baseFee *big.Int,
 	config *ethparams.ChainConfig,
 ) *RPCTransaction {
-	return NewRPCTransaction(msg.AsTransaction(), blockHash, blockNumber, blockTime, index, baseFee, config)
+	return NewRPCTransaction(msg, blockHash, blockNumber, blockTime, index, baseFee, config)
 }
 
 // NewTransactionFromData returns a transaction that will serialize to the RPC

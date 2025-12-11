@@ -23,6 +23,7 @@ import (
 	servertypes "github.com/cosmos/evm/server/types"
 	"github.com/cosmos/evm/utils"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+	oldtxtypes "github.com/cosmos/evm/x/vm/types/oldtx"
 
 	errorsmod "cosmossdk.io/errors"
 
@@ -47,9 +48,17 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 	}
 
 	// the `res.MsgIndex` is inferred from tx index, should be within the bound.
+	var eTx *ethtypes.Transaction
 	msg, ok := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
 	if !ok {
-		return nil, errors.New("invalid ethereum tx")
+		oldMsg, ok := tx.GetMsgs()[res.MsgIndex].(*oldtxtypes.MsgEthereumTx)
+		if !ok {
+			return nil, errors.New("invalid ethereum tx")
+		} else {
+			eTx = oldMsg.AsTransaction()
+		}
+	} else {
+		eTx = msg.AsTransaction()
 	}
 
 	blockRes, err := b.RPCClient.BlockResults(b.Ctx, &block.Block.Height)
@@ -86,7 +95,7 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 	blockTime := uint64(block.Block.Time.UTC().Unix()) //#nosec G115 -- checked for int overflow already
 	index := uint64(res.EthTxIndex)                    //#nosec G115 -- checked for int overflow already
 	return rpctypes.NewTransactionFromMsg(
-		msg,
+		eTx,
 		common.BytesToHash(block.BlockID.Hash.Bytes()),
 		height,
 		blockTime,
@@ -116,7 +125,7 @@ func (b *Backend) GetTransactionByHashPending(txHash common.Hash) (*rpctypes.RPC
 		if msg.Hash() == txHash {
 			// use zero block values since it's not included in a block yet
 			return rpctypes.NewTransactionFromMsg(
-				msg,
+				msg.AsTransaction(),
 				common.Hash{},
 				uint64(0),
 				uint64(0),
@@ -402,7 +411,7 @@ func (b *Backend) GetTransactionByBlockAndIndex(block *cmtrpctypes.ResultBlock, 
 	blockTime := uint64(block.Block.Time.UTC().Unix()) // #nosec G115 -- checked for int overflow already
 	index := uint64(idx)                               // #nosec G115 -- checked for int overflow already
 	return rpctypes.NewTransactionFromMsg(
-		msg,
+		msg.AsTransaction(),
 		common.BytesToHash(block.BlockID.Hash),
 		height,
 		blockTime,
