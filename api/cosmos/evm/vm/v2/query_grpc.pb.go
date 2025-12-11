@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.3.0
 // - protoc             (unknown)
-// source: cosmos/evm/vm/v1/query.proto
+// source: cosmos/evm/vm/v2/query.proto
 
-package vmv1
+package vmv2
 
 import (
 	context "context"
@@ -19,21 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Account_FullMethodName           = "/cosmos.evm.vm.v1.Query/Account"
-	Query_CosmosAccount_FullMethodName     = "/cosmos.evm.vm.v1.Query/CosmosAccount"
-	Query_ValidatorAccount_FullMethodName  = "/cosmos.evm.vm.v1.Query/ValidatorAccount"
-	Query_Balance_FullMethodName           = "/cosmos.evm.vm.v1.Query/Balance"
-	Query_Storage_FullMethodName           = "/cosmos.evm.vm.v1.Query/Storage"
-	Query_Code_FullMethodName              = "/cosmos.evm.vm.v1.Query/Code"
-	Query_Params_FullMethodName            = "/cosmos.evm.vm.v1.Query/Params"
-	Query_EthCall_FullMethodName           = "/cosmos.evm.vm.v1.Query/EthCall"
-	Query_EstimateGas_FullMethodName       = "/cosmos.evm.vm.v1.Query/EstimateGas"
-	Query_TraceTx_FullMethodName           = "/cosmos.evm.vm.v1.Query/TraceTx"
-	Query_TraceBlock_FullMethodName        = "/cosmos.evm.vm.v1.Query/TraceBlock"
-	Query_TraceCall_FullMethodName         = "/cosmos.evm.vm.v1.Query/TraceCall"
-	Query_BaseFee_FullMethodName           = "/cosmos.evm.vm.v1.Query/BaseFee"
-	Query_Config_FullMethodName            = "/cosmos.evm.vm.v1.Query/Config"
-	Query_GlobalMinGasPrice_FullMethodName = "/cosmos.evm.vm.v1.Query/GlobalMinGasPrice"
+	Query_Account_FullMethodName           = "/cosmos.evm.vm.v2.Query/Account"
+	Query_CosmosAccount_FullMethodName     = "/cosmos.evm.vm.v2.Query/CosmosAccount"
+	Query_ValidatorAccount_FullMethodName  = "/cosmos.evm.vm.v2.Query/ValidatorAccount"
+	Query_Balance_FullMethodName           = "/cosmos.evm.vm.v2.Query/Balance"
+	Query_Storage_FullMethodName           = "/cosmos.evm.vm.v2.Query/Storage"
+	Query_Code_FullMethodName              = "/cosmos.evm.vm.v2.Query/Code"
+	Query_Params_FullMethodName            = "/cosmos.evm.vm.v2.Query/Params"
+	Query_EthCall_FullMethodName           = "/cosmos.evm.vm.v2.Query/EthCall"
+	Query_EstimateGas_FullMethodName       = "/cosmos.evm.vm.v2.Query/EstimateGas"
+	Query_TraceTx_FullMethodName           = "/cosmos.evm.vm.v2.Query/TraceTx"
+	Query_TraceBlock_FullMethodName        = "/cosmos.evm.vm.v2.Query/TraceBlock"
+	Query_TraceCall_FullMethodName         = "/cosmos.evm.vm.v2.Query/TraceCall"
+	Query_BaseFee_FullMethodName           = "/cosmos.evm.vm.v2.Query/BaseFee"
+	Query_Config_FullMethodName            = "/cosmos.evm.vm.v2.Query/Config"
+	Query_GlobalMinGasPrice_FullMethodName = "/cosmos.evm.vm.v2.Query/GlobalMinGasPrice"
 )
 
 // QueryClient is the client API for Query service.
@@ -604,7 +604,7 @@ func _Query_GlobalMinGasPrice_Handler(srv interface{}, ctx context.Context, dec 
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Query_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cosmos.evm.vm.v1.Query",
+	ServiceName: "cosmos.evm.vm.v2.Query",
 	HandlerType: (*QueryServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -669,5 +669,5 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "cosmos/evm/vm/v1/query.proto",
+	Metadata: "cosmos/evm/vm/v2/query.proto",
 }

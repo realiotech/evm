@@ -1,4 +1,4 @@
-package vmv1
+package vmv2
 
 import (
 	"fmt"

@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.3.0
 // - protoc             (unknown)
-// source: cosmos/evm/vm/v1/tx.proto
+// source: cosmos/evm/vm/v2/tx.proto
 
-package vmv1
+package vmv2
 
 import (
 	context "context"
@@ -19,9 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_EthereumTx_FullMethodName          = "/cosmos.evm.vm.v1.Msg/EthereumTx"
-	Msg_UpdateParams_FullMethodName        = "/cosmos.evm.vm.v1.Msg/UpdateParams"
-	Msg_RegisterPreinstalls_FullMethodName = "/cosmos.evm.vm.v1.Msg/RegisterPreinstalls"
+	Msg_EthereumTx_FullMethodName          = "/cosmos.evm.vm.v2.Msg/EthereumTx"
+	Msg_UpdateParams_FullMethodName        = "/cosmos.evm.vm.v2.Msg/UpdateParams"
+	Msg_RegisterPreinstalls_FullMethodName = "/cosmos.evm.vm.v2.Msg/RegisterPreinstalls"
 )
 
 // MsgClient is the client API for Msg service.
@@ -176,7 +176,7 @@ func _Msg_RegisterPreinstalls_Handler(srv interface{}, ctx context.Context, dec 
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Msg_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cosmos.evm.vm.v1.Msg",
+	ServiceName: "cosmos.evm.vm.v2.Msg",
 	HandlerType: (*MsgServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -193,5 +193,5 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "cosmos/evm/vm/v1/tx.proto",
+	Metadata: "cosmos/evm/vm/v2/tx.proto",
 }
