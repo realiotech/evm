@@ -36,7 +36,7 @@ func (m *mockHasExtOptions) GetMsgsV2() ([]protov2.Message, error) {
 func (m *mockHasExtOptions) GetExtensionOptions() []*codectypes.Any {
 	return []*codectypes.Any{
 		{
-			TypeUrl: "/cosmos.evm.vm.v1.ExtensionOptionsEthereumTx",
+			TypeUrl: "/cosmos.evm.vm.v2.ExtensionOptionsEthereumTx",
 			Value:   []byte{},
 		},
 	}
