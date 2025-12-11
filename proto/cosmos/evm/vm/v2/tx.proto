@@ -1,10 +1,10 @@
 
 
 syntax = "proto3";
-package cosmos.evm.vm.v1;
+package cosmos.evm.vm.v2;
 
 import "amino/amino.proto";
-import "cosmos/evm/vm/v1/evm.proto";
+import "cosmos/evm/vm/v2/evm.proto";
 import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
@@ -17,7 +17,7 @@ service Msg {
   option (cosmos.msg.v1.service) = true;
   // EthereumTx defines a method submitting Ethereum transactions.
   rpc EthereumTx(MsgEthereumTx) returns (MsgEthereumTxResponse) {
-    option (google.api.http).post = "/cosmos/evm/vm/v1/ethereum_tx";
+    option (google.api.http).post = "/cosmos/evm/vm/v2/ethereum_tx";
   };
   // UpdateParams defined a governance operation for updating the x/vm module
   // parameters. The authority is hard-coded to the Cosmos SDK x/gov module
