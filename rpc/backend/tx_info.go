@@ -23,7 +23,7 @@ import (
 	servertypes "github.com/cosmos/evm/server/types"
 	"github.com/cosmos/evm/utils"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
-	oldtxtypes "github.com/cosmos/evm/x/vm/types/oldtx"
+	oldtxtypes "github.com/cosmos/evm/x/vm/types/v1"
 
 	errorsmod "cosmossdk.io/errors"
 

@@ -301,7 +301,7 @@ func (s *TestSuite) TestGetTransactionByBlockAndIndex() {
 
 	blockTime := uint64(defaultBlock.Time.UTC().Unix()) //nolint:gosec // G115
 	txFromMsg := rpctypes.NewTransactionFromMsg(
-		msgEthTx,
+		msgEthTx.AsTransaction(),
 		common.BytesToHash(defaultBlock.Hash().Bytes()),
 		1,
 		blockTime,
@@ -397,7 +397,7 @@ func (s *TestSuite) TestGetTransactionByBlockNumberAndIndex() {
 	defaultBlock := types.MakeBlock(1, []types.Tx{bz}, nil, nil)
 	blockTime := uint64(defaultBlock.Time.UTC().Unix()) //nolint:gosec // G115
 	txFromMsg := rpctypes.NewTransactionFromMsg(
-		msgEthTx,
+		msgEthTx.AsTransaction(),
 		common.BytesToHash(defaultBlock.Hash().Bytes()),
 		1,
 		blockTime,

@@ -1,4 +1,4 @@
-package oldtx
+package v1
 
 import (
 	"fmt"
@@ -13,7 +13,6 @@ import (
 
 var (
 	_ codectypes.UnpackInterfacesMessage = MsgEthereumTx{}
-
 )
 
 // UnpackInterfaces implements UnpackInterfacesMessage.UnpackInterfaces

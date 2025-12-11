@@ -1,4 +1,4 @@
-package oldtx
+package v1
 
 import (
 	"github.com/ethereum/go-ethereum/common"
