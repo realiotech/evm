@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/pkg/errors"
@@ -23,11 +25,76 @@ import (
 	servertypes "github.com/cosmos/evm/server/types"
 	"github.com/cosmos/evm/utils"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+	"github.com/cosmos/evm/x/vm/types/legacy"
 
 	errorsmod "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
+
+// asEthereumTxMsg converts a sdk.Msg to EthereumTxMsg interface.
+// It handles both the new MsgEthereumTx and legacy MsgEthereumTx formats.
+func asEthereumTxMsg(msg sdk.Msg) (evmtypes.EthereumTxMsg, bool) {
+	// Try new format first
+	if ethMsg, ok := msg.(*evmtypes.MsgEthereumTx); ok {
+		return ethMsg, true
+	}
+	// Try legacy format
+	if legacyMsg, ok := msg.(*legacy.MsgEthereumTx); ok {
+		return legacyMsg, true
+	}
+	return nil, false
+}
+
+// isLegacyTxError checks if an error indicates a legacy transaction format issue
+func isLegacyTxError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "errUnknownField") &&
+		strings.Contains(errStr, "MsgEthereumTx")
+}
+
+// decodeTxWithLegacyFallback decodes a transaction, falling back to legacy decoding if needed.
+// It returns the EthereumTxMsg at the given message index.
+func (b *Backend) decodeTxWithLegacyFallback(txBytes []byte, msgIndex int) (evmtypes.EthereumTxMsg, error) {
+	// Try standard decoder first
+	tx, err := b.ClientCtx.TxConfig.TxDecoder()(txBytes)
+	if err == nil {
+		msgs := tx.GetMsgs()
+		if msgIndex >= len(msgs) {
+			return nil, fmt.Errorf("message index %d out of bounds", msgIndex)
+		}
+		if msg, ok := asEthereumTxMsg(msgs[msgIndex]); ok {
+			return msg, nil
+		}
+		return nil, errors.New("not an ethereum tx")
+	}
+
+	// If it's a legacy tx error, try to decode as legacy
+	if !isLegacyTxError(err) {
+		return nil, err
+	}
+
+	// Fallback: decode using legacy-aware decoder
+	legacyTx, legacyErr := legacy.DecodeTx(txBytes)
+	if legacyErr != nil {
+		// Return original error if legacy decoding also fails
+		return nil, fmt.Errorf("failed to decode tx: %w (legacy decode also failed: %v)", err, legacyErr)
+	}
+
+	msgs := legacyTx.GetMsgs()
+	if msgIndex >= len(msgs) {
+		return nil, fmt.Errorf("message index %d out of bounds", msgIndex)
+	}
+
+	if msg, ok := asEthereumTxMsg(msgs[msgIndex]); ok {
+		return msg, nil
+	}
+
+	return nil, errors.New("not an ethereum tx")
+}
 
 // GetTransactionByHash returns the Ethereum format transaction identified by Ethereum transaction hash
 func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransaction, error) {
@@ -41,15 +108,10 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 		return nil, err
 	}
 
-	tx, err := b.ClientCtx.TxConfig.TxDecoder()(block.Block.Txs[res.TxIndex])
+	// Decode transaction with fallback to legacy format
+	msg, err := b.decodeTxWithLegacyFallback(block.Block.Txs[res.TxIndex], int(res.MsgIndex))
 	if err != nil {
 		return nil, err
-	}
-
-	// the `res.MsgIndex` is inferred from tx index, should be within the bound.
-	msg, ok := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
-	if !ok {
-		return nil, errors.New("invalid ethereum tx")
 	}
 
 	blockRes, err := b.RPCClient.BlockResults(b.Ctx, &block.Block.Height)
@@ -180,26 +242,23 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 		return nil, fmt.Errorf("block not found at height %d: %w", res.Height, err)
 	}
 
-	tx, err := b.ClientCtx.TxConfig.TxDecoder()(resBlock.Block.Txs[res.TxIndex])
-	if err != nil {
-		b.Logger.Debug("decoding failed", "error", err.Error())
-		return nil, fmt.Errorf("failed to decode tx: %w", err)
-	}
-
 	blockRes, err := b.RPCClient.BlockResults(b.Ctx, &res.Height)
 	if err != nil {
 		b.Logger.Debug("failed to retrieve block results", "height", res.Height, "error", err.Error())
 		return nil, fmt.Errorf("block result not found at height %d: %w", res.Height, err)
 	}
 
-	ethMsg := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
-	receipts, err := b.ReceiptsFromCometBlock(resBlock, blockRes, []*evmtypes.MsgEthereumTx{ethMsg})
+	// Decode transaction with fallback to legacy format
+	ethMsg, err := b.decodeTxWithLegacyFallback(resBlock.Block.Txs[res.TxIndex], int(res.MsgIndex))
 	if err != nil {
-		return nil, fmt.Errorf("failed to get receipts from comet block")
+		b.Logger.Debug("decoding failed", "error", err.Error())
+		return nil, fmt.Errorf("failed to decode tx: %w", err)
 	}
 
-	var signer ethtypes.Signer
+	// Build receipt from the decoded message
 	ethTx := ethMsg.AsTransaction()
+
+	var signer ethtypes.Signer
 	if ethTx.Protected() {
 		signer = ethtypes.LatestSignerForChainID(ethTx.ChainId())
 	} else {
@@ -210,7 +269,62 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 		return nil, fmt.Errorf("failed to get sender: %w", err)
 	}
 
-	return rpctypes.RPCMarshalReceipt(receipts[0], ethTx, from)
+	// Build the receipt manually
+	baseFee, err := b.BaseFee(blockRes)
+	if err != nil {
+		b.Logger.Error("failed to fetch Base Fee", "height", res.Height, "error", err)
+	}
+
+	var effectiveGasPrice *big.Int
+	if baseFee != nil {
+		effectiveGasPrice = rpctypes.EffectiveGasPrice(ethTx, baseFee)
+	} else {
+		effectiveGasPrice = ethTx.GasFeeCap()
+	}
+
+	var status uint64
+	if res.Failed {
+		status = ethtypes.ReceiptStatusFailed
+	} else {
+		status = ethtypes.ReceiptStatusSuccessful
+	}
+
+	contractAddress := common.Address{}
+	if ethTx.To() == nil {
+		contractAddress = crypto.CreateAddress(from, ethTx.Nonce())
+	}
+
+	msgIndex := int(res.MsgIndex)
+	logs, err := evmtypes.DecodeMsgLogs(
+		blockRes.TxsResults[res.TxIndex].Data,
+		msgIndex,
+		uint64(resBlock.Block.Height),
+	)
+	if err != nil {
+		b.Logger.Debug("failed to parse tx logs", "error", err.Error())
+	}
+
+	bloom := ethtypes.CreateBloom(&ethtypes.Receipt{Logs: logs})
+
+	receipt := &ethtypes.Receipt{
+		Type:              ethTx.Type(),
+		PostState:         nil,
+		Status:            status,
+		CumulativeGasUsed: res.GasUsed, // simplified: just use this tx's gas
+		Bloom:             bloom,
+		Logs:              logs,
+		TxHash:            ethMsg.GetHash(),
+		ContractAddress:   contractAddress,
+		GasUsed:           res.GasUsed,
+		EffectiveGasPrice: effectiveGasPrice,
+		BlobGasUsed:       uint64(0),
+		BlobGasPrice:      big.NewInt(0),
+		BlockHash:         common.BytesToHash(resBlock.BlockID.Hash),
+		BlockNumber:       big.NewInt(resBlock.Block.Height),
+		TransactionIndex:  uint(res.EthTxIndex),
+	}
+
+	return rpctypes.RPCMarshalReceipt(receipt, ethTx, from)
 }
 
 // GetTransactionLogs returns the transaction logs identified by hash.
@@ -364,21 +478,14 @@ func (b *Backend) GetTransactionByBlockAndIndex(block *cmtrpctypes.ResultBlock, 
 		return nil, nil
 	}
 
-	var msg *evmtypes.MsgEthereumTx
+	var msg evmtypes.EthereumTxMsg
 	// find in tx indexer
 	res, err := b.GetTxByTxIndex(block.Block.Height, uint(idx))
 	if err == nil {
-		tx, err := b.ClientCtx.TxConfig.TxDecoder()(block.Block.Txs[res.TxIndex])
+		// Decode transaction with fallback to legacy format
+		msg, err = b.decodeTxWithLegacyFallback(block.Block.Txs[res.TxIndex], int(res.MsgIndex))
 		if err != nil {
-			b.Logger.Debug("invalid ethereum tx", "height", block.Block.Header, "index", idx)
-			return nil, nil
-		}
-
-		var ok bool
-		// msgIndex is inferred from tx events, should be within bound.
-		msg, ok = tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
-		if !ok {
-			b.Logger.Debug("invalid ethereum tx", "height", block.Block.Header, "index", idx)
+			b.Logger.Debug("invalid ethereum tx", "height", block.Block.Header, "index", idx, "error", err.Error())
 			return nil, nil
 		}
 	} else {

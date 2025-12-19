@@ -6,7 +6,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/msgservice"
 	"github.com/cosmos/cosmos-sdk/types/tx"
-	"github.com/cosmos/gogoproto/proto"
 
 	"github.com/cosmos/evm/x/vm/types/legacy"
 )
@@ -30,14 +29,6 @@ const (
 func init() {
 	RegisterLegacyAminoCodec(amino)
 	amino.Seal()
-
-	// Register legacy types with cosmos.evm.vm.v1 namespace for backward compatibility
-	// This is needed because old transactions may have these type URLs
-	proto.RegisterType((*legacy.DynamicFeeTx)(nil), "cosmos.evm.vm.v1.DynamicFeeTx")
-	proto.RegisterType((*legacy.AccessListTx)(nil), "cosmos.evm.vm.v1.AccessListTx")
-	proto.RegisterType((*legacy.LegacyTx)(nil), "cosmos.evm.vm.v1.LegacyTx")
-	proto.RegisterType((*legacy.MsgEthereumTx)(nil), "cosmos.evm.vm.v1.MsgEthereumTx")
-	proto.RegisterType((*legacy.ExtensionOptionsEthereumTx)(nil), "cosmos.evm.vm.v1.ExtensionOptionsEthereumTx")
 }
 
 // RegisterInterfaces registers the client interfaces to protobuf Any.
