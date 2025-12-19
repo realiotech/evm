@@ -6,6 +6,9 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/msgservice"
 	"github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/gogoproto/proto"
+
+	"github.com/cosmos/evm/x/vm/types/legacy"
 )
 
 var (
@@ -27,6 +30,14 @@ const (
 func init() {
 	RegisterLegacyAminoCodec(amino)
 	amino.Seal()
+
+	// Register legacy types with cosmos.evm.vm.v1 namespace for backward compatibility
+	// This is needed because old transactions may have these type URLs
+	proto.RegisterType((*legacy.DynamicFeeTx)(nil), "cosmos.evm.vm.v1.DynamicFeeTx")
+	proto.RegisterType((*legacy.AccessListTx)(nil), "cosmos.evm.vm.v1.AccessListTx")
+	proto.RegisterType((*legacy.LegacyTx)(nil), "cosmos.evm.vm.v1.LegacyTx")
+	proto.RegisterType((*legacy.MsgEthereumTx)(nil), "cosmos.evm.vm.v1.MsgEthereumTx")
+	proto.RegisterType((*legacy.ExtensionOptionsEthereumTx)(nil), "cosmos.evm.vm.v1.ExtensionOptionsEthereumTx")
 }
 
 // RegisterInterfaces registers the client interfaces to protobuf Any.
@@ -34,11 +45,37 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 	registry.RegisterImplementations(
 		(*tx.TxExtensionOptionI)(nil),
 		&ExtensionOptionsEthereumTx{},
+		&legacy.ExtensionOptionsEthereumTx{}, // Legacy extension option
 	)
 	registry.RegisterImplementations(
 		(*sdk.Msg)(nil),
 		&MsgEthereumTx{},
 		&MsgUpdateParams{},
+		&legacy.MsgEthereumTx{}, // Legacy MsgEthereumTx
+	)
+
+	// Register TxData implementations for unpacking legacy Any field
+	// These are registered under multiple namespaces for backward compatibility
+	registry.RegisterInterface(
+		"ethermint.evm.v1.TxData",
+		(*legacy.TxData)(nil),
+		&legacy.DynamicFeeTx{},
+		&legacy.AccessListTx{},
+		&legacy.LegacyTx{},
+	)
+	registry.RegisterInterface(
+		"os.evm.v1.TxData",
+		(*legacy.TxData)(nil),
+		&legacy.DynamicFeeTx{},
+		&legacy.AccessListTx{},
+		&legacy.LegacyTx{},
+	)
+	registry.RegisterInterface(
+		"cosmos.evm.vm.v1.TxData",
+		(*legacy.TxData)(nil),
+		&legacy.DynamicFeeTx{},
+		&legacy.AccessListTx{},
+		&legacy.LegacyTx{},
 	)
 
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)

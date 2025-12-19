@@ -113,7 +113,7 @@ func (b *Backend) GetTransactionByHashPending(txHash common.Hash) (*rpctypes.RPC
 			continue
 		}
 
-		if msg.Hash() == txHash {
+		if msg.GetHash() == txHash {
 			// use zero block values since it's not included in a block yet
 			return rpctypes.NewTransactionFromMsg(
 				msg,
