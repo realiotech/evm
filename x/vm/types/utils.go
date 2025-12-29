@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	"github.com/cosmos/evm/x/vm/types/legacy"
 	"github.com/cosmos/gogoproto/proto"
 
 	errorsmod "cosmossdk.io/errors"
@@ -135,15 +136,16 @@ func DecodeTransactionLogs(data []byte) (TransactionLogs, error) {
 	return logs, nil
 }
 
-// UnwrapEthereumMsg extracts MsgEthereumTx from wrapping sdk.Tx
-func UnwrapEthereumMsg(tx *sdk.Tx, ethHash common.Hash) (*MsgEthereumTx, error) {
+// UnwrapEthereumMsg extracts EthereumTxMsg from wrapping sdk.Tx
+// Supports both MsgEthereumTx and legacy.MsgEthereumTx
+func UnwrapEthereumMsg(tx *sdk.Tx, ethHash common.Hash) (EthereumTxMsg, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("invalid tx: nil")
 	}
 
 	for _, msg := range (*tx).GetMsgs() {
-		ethMsg, ok := msg.(*MsgEthereumTx)
-		if !ok {
+		ethMsg, err := UnpackEthMsgAny(msg)
+		if err != nil {
 			return nil, fmt.Errorf("invalid tx type: %T", tx)
 		}
 		txHash := ethMsg.AsTransaction().Hash()
@@ -156,6 +158,7 @@ func UnwrapEthereumMsg(tx *sdk.Tx, ethHash common.Hash) (*MsgEthereumTx, error) 
 }
 
 // UnpackEthMsg unpacks an Ethereum message from a Cosmos SDK message
+// Returns the new MsgEthereumTx type only
 func UnpackEthMsg(msg sdk.Msg) (
 	ethMsg *MsgEthereumTx,
 	ethTx *ethtypes.Transaction,
@@ -168,6 +171,32 @@ func UnpackEthMsg(msg sdk.Msg) (
 
 	// sender address should be in the tx cache from the previous AnteHandle call
 	return msgEthTx, msgEthTx.Raw.Transaction, nil
+}
+
+// UnpackEthMsgAny unpacks an Ethereum message from a Cosmos SDK message
+// Supports both MsgEthereumTx and legacy.MsgEthereumTx
+func UnpackEthMsgAny(msg sdk.Msg) (EthereumTxMsg, error) {
+	switch m := msg.(type) {
+	case *MsgEthereumTx:
+		return m, nil
+	case *legacy.MsgEthereumTx:
+		return m, nil
+	default:
+		return nil, errorsmod.Wrapf(
+			errortypes.ErrUnknownRequest,
+			"message is not an EthereumTxMsg: %T", msg,
+		)
+	}
+}
+
+// IsEthereumTxMsg checks if a message is any type of ethereum tx message
+func IsEthereumTxMsg(msg sdk.Msg) bool {
+	switch msg.(type) {
+	case *MsgEthereumTx, *legacy.MsgEthereumTx:
+		return true
+	default:
+		return false
+	}
 }
 
 // BinSearch executes the binary search and hone in on an executable gas limit
