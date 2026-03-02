@@ -35,6 +35,9 @@ import (
 	"github.com/cosmos/evm/x/feemarket"
 	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	"github.com/cosmos/evm/x/feesponsor"
+	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
+	feesponsortypes "github.com/cosmos/evm/x/feesponsor/types"
 	ibccallbackskeeper "github.com/cosmos/evm/x/ibc/callbacks/keeper"
 
 	"github.com/cosmos/evm/x/ibc/transfer"
@@ -188,6 +191,7 @@ type EVMD struct {
 
 	// Cosmos EVM keepers
 	FeeMarketKeeper   feemarketkeeper.Keeper
+	FeeSponsorKeeper  feesponsorkeeper.Keeper
 	EVMKeeper         *evmkeeper.Keeper
 	Erc20Keeper       erc20keeper.Keeper
 	PreciseBankKeeper precisebankkeeper.Keeper
@@ -242,7 +246,7 @@ func NewExampleApp(
 		// ibc keys
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
 		// Cosmos EVM store keys
-		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey,
+		evmtypes.StoreKey, feemarkettypes.StoreKey, feesponsortypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey,
 	)
 
 	tkeys := storetypes.NewTransientStoreKeys(evmtypes.TransientKey, feemarkettypes.TransientKey)
@@ -405,7 +409,7 @@ func NewExampleApp(
 
 	app.GovKeeper = *govKeeper.SetHooks(
 		govtypes.NewMultiGovHooks(
-			// register the governance hooks
+		// register the governance hooks
 		),
 	)
 
@@ -426,6 +430,12 @@ func NewExampleApp(
 		appCodec, authtypes.NewModuleAddress(govtypes.ModuleName),
 		keys[feemarkettypes.StoreKey],
 		tkeys[feemarkettypes.TransientKey],
+	)
+
+	app.FeeSponsorKeeper = feesponsorkeeper.NewKeeper(
+		appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		keys[feesponsortypes.StoreKey],
 	)
 
 	// Set up PreciseBank keeper
@@ -571,6 +581,7 @@ func NewExampleApp(
 		// Cosmos EVM modules
 		vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, app.AccountKeeper.AddressCodec()),
 		feemarket.NewAppModule(app.FeeMarketKeeper),
+		feesponsor.NewAppModule(app.FeeSponsorKeeper),
 		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
 		precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AccountKeeper),
 	)
@@ -611,7 +622,7 @@ func NewExampleApp(
 		ibcexported.ModuleName, ibctransfertypes.ModuleName,
 
 		// Cosmos EVM BeginBlockers
-		erc20types.ModuleName, feemarkettypes.ModuleName,
+		erc20types.ModuleName, feemarkettypes.ModuleName, feesponsortypes.ModuleName,
 		evmtypes.ModuleName, // NOTE: EVM BeginBlocker must come after FeeMarket BeginBlocker
 
 		// TODO: remove no-ops? check if all are no-ops before removing
@@ -639,7 +650,7 @@ func NewExampleApp(
 		slashingtypes.ModuleName, minttypes.ModuleName,
 		genutiltypes.ModuleName, evidencetypes.ModuleName, authz.ModuleName,
 		feegrant.ModuleName, upgradetypes.ModuleName, consensusparamtypes.ModuleName,
-		precisebanktypes.ModuleName,
+		precisebanktypes.ModuleName, feesponsortypes.ModuleName,
 		vestingtypes.ModuleName,
 	)
 
@@ -658,6 +669,7 @@ func NewExampleApp(
 		// gentx transactions use MinGasPriceDecorator.AnteHandle
 		evmtypes.ModuleName,
 		feemarkettypes.ModuleName,
+		feesponsortypes.ModuleName,
 		erc20types.ModuleName,
 		precisebanktypes.ModuleName,
 
