@@ -1,0 +1,33 @@
+syntax = "proto3";
+package cosmos.evm.feesponsor.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/cosmos/evm/x/feesponsor/types";
+
+// Msg defines the feesponsor Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // SetFeePayer defines a governance operation for setting the EVM fee payer.
+  // The authority is hard-coded to the Cosmos SDK x/gov module account.
+  rpc SetFeePayer(MsgSetFeePayer) returns (MsgSetFeePayerResponse);
+
+}
+
+// MsgSetFeePayer defines a message for setting the EVM fee payer.
+message MsgSetFeePayer {
+  option (amino.name) = "cosmos/evm/MsgSetFeePayer";
+  option (cosmos.msg.v1.signer) = "authority";
+
+  // authority is the address that controls the module (defaults to x/gov unless overwritten).
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // evm_fee_payer is the address that will pay for EVM transaction fees
+  string evm_fee_payer = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgSetFeePayerResponse defines the response for MsgSetFeePayer.
+message MsgSetFeePayerResponse {}
