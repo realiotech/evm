@@ -1,6 +1,7 @@
 package evm
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 
@@ -16,9 +17,12 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
 
+	"cosmossdk.io/x/feegrant"
+	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
 )
 
 const AcceptedTxType = 0 |
@@ -30,12 +34,14 @@ const AcceptedTxType = 0 |
 // MonoDecorator is a single decorator that handles all the prechecks for
 // ethereum transactions.
 type MonoDecorator struct {
-	accountKeeper   anteinterfaces.AccountKeeper
-	feeMarketKeeper anteinterfaces.FeeMarketKeeper
-	evmKeeper       anteinterfaces.EVMKeeper
-	maxGasWanted    uint64
-	evmParams       *evmtypes.Params
-	feemarketParams *feemarkettypes.Params
+	accountKeeper    anteinterfaces.AccountKeeper
+	feeMarketKeeper  anteinterfaces.FeeMarketKeeper
+	evmKeeper        anteinterfaces.EVMKeeper
+	maxGasWanted     uint64
+	evmParams        *evmtypes.Params
+	feemarketParams  *feemarkettypes.Params
+	feegrantKeeper   feegrantkeeper.Keeper
+	feesponsorKeeper feesponsorkeeper.Keeper
 }
 
 // NewEVMMonoDecorator creates the 'mono' decorator, that is used to run the ante handle logic
@@ -48,22 +54,27 @@ func NewEVMMonoDecorator(
 	accountKeeper anteinterfaces.AccountKeeper,
 	feeMarketKeeper anteinterfaces.FeeMarketKeeper,
 	evmKeeper anteinterfaces.EVMKeeper,
+	feegrantKeeper feegrantkeeper.Keeper,
+	feesponsorKeeper feesponsorkeeper.Keeper,
 	maxGasWanted uint64,
 	evmParams *evmtypes.Params,
 	feemarketParams *feemarkettypes.Params,
 ) MonoDecorator {
 	return MonoDecorator{
-		accountKeeper:   accountKeeper,
-		feeMarketKeeper: feeMarketKeeper,
-		evmKeeper:       evmKeeper,
-		maxGasWanted:    maxGasWanted,
-		evmParams:       evmParams,
-		feemarketParams: feemarketParams,
+		accountKeeper:    accountKeeper,
+		feeMarketKeeper:  feeMarketKeeper,
+		evmKeeper:        evmKeeper,
+		feegrantKeeper:   feegrantKeeper,
+		feesponsorKeeper: feesponsorKeeper,
+		maxGasWanted:     maxGasWanted,
+		evmParams:        evmParams,
+		feemarketParams:  feemarketParams,
 	}
 }
 
 // AnteHandle handles the entire decorator chain using a mono decorator.
 func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (newCtx sdk.Context, err error) {
+	fmt.Println("AnteHandle", tx.GetMsgs())
 	// 0. Basic validation of the transaction
 	var txFeeInfo *txtypes.Fee
 	if !ctx.IsReCheckTx() {
@@ -172,22 +183,60 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	}
 
 	from := ethMsg.GetFrom()
-	fromAddr := common.BytesToAddress(from)
+	haveSponpor := false
+	gloalFeePayer, found := md.feesponsorKeeper.GetFeePayer(ctx)
 
-	// 6. account balance verification
-	// We get the account with the balance from the EVM keeper because it is
-	// using a wrapper of the bank keeper as a dependency to scale all
-	// balances to 18 decimals.
-	account := md.evmKeeper.GetAccount(ctx, fromAddr)
-	if err := VerifyAccountBalance(
+	// 6. account verification and balance check
+
+	// Verify account is valid EOA
+	account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(from))
+	account, err = VerifyAccount(
 		ctx,
 		md.evmKeeper,
 		md.accountKeeper,
 		account,
-		fromAddr,
-		ethTx,
-	); err != nil {
+		common.BytesToAddress(from),
+	)
+	if err != nil {
 		return ctx, err
+	}
+
+	// We get the account with the balance from the EVM keeper because it is
+	// using a wrapper of the bank keeper as a dependency to scale all
+	// balances to 18 decimals.
+	if found {
+		grant, err := md.feegrantKeeper.Allowance(ctx, &feegrant.QueryAllowanceRequest{
+			Granter: sdk.AccAddress(gloalFeePayer).String(),
+			Grantee: from.String(),
+		})
+
+		// If have grant, check global fee payer can cover tx fee
+		// (not contains tx value)
+		if grant != nil && err == nil {
+			account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(gloalFeePayer))
+
+			// Verify global fee account balance with tx fees
+			costWithoutValue := new(big.Int).Sub(ethTx.Cost(), ethTx.Value())
+			err = VerifyAccountBalance(
+				account,
+				costWithoutValue,
+			)
+			if err != nil {
+				haveSponpor = false
+			} else {
+				haveSponpor = true
+			}
+		}
+	}
+
+	// If no fee sponsor, verify sender has enough balance for total cost (fees + value)
+	if !haveSponpor {
+		account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(from))
+
+		// Verify sender has enough balance for total cost (fees + value)
+		if err := VerifyAccountBalance(account, ethTx.Cost()); err != nil {
+			return ctx, err
+		}
 	}
 
 	// 7. can transfer
@@ -217,11 +266,30 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		return ctx, err
 	}
 
+	feePayer := common.BytesToAddress(from)
+	// If fee payer is global fee payer, use granted fees
+	if haveSponpor {
+		err = md.feegrantKeeper.UseGrantedFees(
+			ctx,
+			gloalFeePayer,
+			from,
+			msgFees,
+			msgs,
+		)
+		// If can not use granted fees,
+		// deduct fee from tx sender
+		if err != nil {
+			feePayer = common.BytesToAddress(from)
+		} else {
+			feePayer = common.BytesToAddress(gloalFeePayer)
+		}
+	}
+
 	err = ConsumeFeesAndEmitEvent(
 		ctx,
 		md.evmKeeper,
 		msgFees,
-		from,
+		feePayer.Bytes(),
 	)
 	if err != nil {
 		return ctx, err
