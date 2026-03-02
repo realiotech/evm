@@ -254,7 +254,7 @@ func (s *KeeperTestSuite) TestCheckSenderBalance() {
 			acct := s.Network.App.GetEVMKeeper().GetAccountOrEmpty(s.Network.GetContext(), addr)
 			err := keeper.CheckSenderBalance(
 				sdkmath.NewIntFromBigInt(acct.Balance.ToBig()),
-				tx.AsTransaction(),
+				tx.AsTransaction().Cost(),
 			)
 
 			if tc.expectPass {
