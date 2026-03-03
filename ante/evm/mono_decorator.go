@@ -1,7 +1,6 @@
 package evm
 
 import (
-	"fmt"
 	"math"
 	"math/big"
 
@@ -74,7 +73,6 @@ func NewEVMMonoDecorator(
 
 // AnteHandle handles the entire decorator chain using a mono decorator.
 func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (newCtx sdk.Context, err error) {
-	fmt.Println("AnteHandle", tx.GetMsgs())
 	// 0. Basic validation of the transaction
 	var txFeeInfo *txtypes.Fee
 	if !ctx.IsReCheckTx() {
@@ -184,6 +182,7 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 
 	from := ethMsg.GetFrom()
 	haveSponpor := false
+	feePayer := common.BytesToAddress(from)
 	gloalFeePayer, found := md.feesponsorKeeper.GetFeePayer(ctx)
 
 	// 6. account verification and balance check
@@ -201,9 +200,26 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		return ctx, err
 	}
 
+	// 8. gas consumption
+	// VerifyFee early for fee sponsor check
+	msgFees, err := evmkeeper.VerifyFee(
+		ethTx,
+		evmDenom,
+		decUtils.BaseFee,
+		decUtils.Rules.IsHomestead,
+		decUtils.Rules.IsIstanbul,
+		decUtils.Rules.IsShanghai,
+		ctx.IsCheckTx(),
+	)
+	if err != nil {
+		return ctx, err
+	}
+
 	// We get the account with the balance from the EVM keeper because it is
 	// using a wrapper of the bank keeper as a dependency to scale all
 	// balances to 18 decimals.
+
+	// Check if we found a global fee payer and the account exists
 	if found {
 		grant, err := md.feegrantKeeper.Allowance(ctx, &feegrant.QueryAllowanceRequest{
 			Granter: sdk.AccAddress(gloalFeePayer).String(),
@@ -224,7 +240,20 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 			if err != nil {
 				haveSponpor = false
 			} else {
-				haveSponpor = true
+				err = md.feegrantKeeper.UseGrantedFees(
+					ctx,
+					gloalFeePayer,
+					from,
+					msgFees,
+					msgs,
+				)
+				// If grant is not enough, deduct fee from tx sender
+				if err != nil {
+					haveSponpor = false
+				} else {
+					haveSponpor = true
+					feePayer = common.BytesToAddress(gloalFeePayer)
+				}
 			}
 		}
 	}
@@ -250,39 +279,6 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		decUtils.Rules.IsLondon,
 	); err != nil {
 		return ctx, err
-	}
-
-	// 8. gas consumption
-	msgFees, err := evmkeeper.VerifyFee(
-		ethTx,
-		evmDenom,
-		decUtils.BaseFee,
-		decUtils.Rules.IsHomestead,
-		decUtils.Rules.IsIstanbul,
-		decUtils.Rules.IsShanghai,
-		ctx.IsCheckTx(),
-	)
-	if err != nil {
-		return ctx, err
-	}
-
-	feePayer := common.BytesToAddress(from)
-	// If fee payer is global fee payer, use granted fees
-	if haveSponpor {
-		err = md.feegrantKeeper.UseGrantedFees(
-			ctx,
-			gloalFeePayer,
-			from,
-			msgFees,
-			msgs,
-		)
-		// If can not use granted fees,
-		// deduct fee from tx sender
-		if err != nil {
-			feePayer = common.BytesToAddress(from)
-		} else {
-			feePayer = common.BytesToAddress(gloalFeePayer)
-		}
 	}
 
 	err = ConsumeFeesAndEmitEvent(
