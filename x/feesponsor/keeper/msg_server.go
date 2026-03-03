@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/cosmos/evm/x/feesponsor/types"
 
@@ -17,8 +16,6 @@ var _ types.MsgServer = &Keeper{}
 // SetFeePayer sets the EVM fee payer address
 func (k Keeper) SetFeePayer(goCtx context.Context, msg *types.MsgSetFeePayer) (*types.MsgSetFeePayerResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	fmt.Println("SetFeePayer")
 
 	// Validate authority
 	if err := k.validateAuthority(msg.Authority); err != nil {
@@ -44,6 +41,29 @@ func (k Keeper) SetFeePayer(goCtx context.Context, msg *types.MsgSetFeePayer) (*
 	)
 
 	return &types.MsgSetFeePayerResponse{}, nil
+}
+
+// RemoveFeePayer removes the EVM fee payer address
+func (k Keeper) RemoveFeePayer(goCtx context.Context, msg *types.MsgRemoveFeePayer) (*types.MsgRemoveFeePayerResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	// Validate authority
+	if err := k.validateAuthority(msg.Authority); err != nil {
+		return nil, err
+	}
+
+	// Remove the fee payer
+	k.RemoveFeePayerFromStore(ctx)
+
+	// Emit event
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			types.ModuleName,
+			sdk.NewAttribute("action", "remove_fee_payer"),
+		),
+	)
+
+	return &types.MsgRemoveFeePayerResponse{}, nil
 }
 
 // validateAuthority checks if the provided authority is the expected authority

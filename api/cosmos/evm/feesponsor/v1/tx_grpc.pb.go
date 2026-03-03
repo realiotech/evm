@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_SetFeePayer_FullMethodName = "/cosmos.evm.feesponsor.v1.Msg/SetFeePayer"
+	Msg_SetFeePayer_FullMethodName    = "/cosmos.evm.feesponsor.v1.Msg/SetFeePayer"
+	Msg_RemoveFeePayer_FullMethodName = "/cosmos.evm.feesponsor.v1.Msg/RemoveFeePayer"
 )
 
 // MsgClient is the client API for Msg service.
@@ -29,6 +30,9 @@ type MsgClient interface {
 	// SetFeePayer defines a governance operation for setting the EVM fee payer.
 	// The authority is hard-coded to the Cosmos SDK x/gov module account.
 	SetFeePayer(ctx context.Context, in *MsgSetFeePayer, opts ...grpc.CallOption) (*MsgSetFeePayerResponse, error)
+	// RemoveFeePayer defines a governance operation for removing the EVM fee payer.
+	// The authority is hard-coded to the Cosmos SDK x/gov module account.
+	RemoveFeePayer(ctx context.Context, in *MsgRemoveFeePayer, opts ...grpc.CallOption) (*MsgRemoveFeePayerResponse, error)
 }
 
 type msgClient struct {
@@ -48,6 +52,15 @@ func (c *msgClient) SetFeePayer(ctx context.Context, in *MsgSetFeePayer, opts ..
 	return out, nil
 }
 
+func (c *msgClient) RemoveFeePayer(ctx context.Context, in *MsgRemoveFeePayer, opts ...grpc.CallOption) (*MsgRemoveFeePayerResponse, error) {
+	out := new(MsgRemoveFeePayerResponse)
+	err := c.cc.Invoke(ctx, Msg_RemoveFeePayer_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -55,6 +68,9 @@ type MsgServer interface {
 	// SetFeePayer defines a governance operation for setting the EVM fee payer.
 	// The authority is hard-coded to the Cosmos SDK x/gov module account.
 	SetFeePayer(context.Context, *MsgSetFeePayer) (*MsgSetFeePayerResponse, error)
+	// RemoveFeePayer defines a governance operation for removing the EVM fee payer.
+	// The authority is hard-coded to the Cosmos SDK x/gov module account.
+	RemoveFeePayer(context.Context, *MsgRemoveFeePayer) (*MsgRemoveFeePayerResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -64,6 +80,9 @@ type UnimplementedMsgServer struct {
 
 func (UnimplementedMsgServer) SetFeePayer(context.Context, *MsgSetFeePayer) (*MsgSetFeePayerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetFeePayer not implemented")
+}
+func (UnimplementedMsgServer) RemoveFeePayer(context.Context, *MsgRemoveFeePayer) (*MsgRemoveFeePayerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveFeePayer not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -96,6 +115,24 @@ func _Msg_SetFeePayer_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RemoveFeePayer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRemoveFeePayer)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RemoveFeePayer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RemoveFeePayer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RemoveFeePayer(ctx, req.(*MsgRemoveFeePayer))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -106,6 +143,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetFeePayer",
 			Handler:    _Msg_SetFeePayer_Handler,
+		},
+		{
+			MethodName: "RemoveFeePayer",
+			Handler:    _Msg_RemoveFeePayer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

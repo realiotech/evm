@@ -64,3 +64,9 @@ func (k Keeper) GetFeePayer(ctx sdk.Context) ([]byte, bool) {
 	}
 	return bz, true
 }
+
+// RemoveFeePayerFromStore removes the EVM fee payer from the store.
+func (k Keeper) RemoveFeePayerFromStore(ctx sdk.Context) {
+	store := ctx.KVStore(k.storeKey)
+	store.Delete(types.KeyPrefixFeePayer)
+}

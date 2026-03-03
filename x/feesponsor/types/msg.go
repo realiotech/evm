@@ -7,6 +7,7 @@ import (
 
 var (
 	_ sdk.Msg = &MsgSetFeePayer{}
+	_ sdk.Msg = &MsgRemoveFeePayer{}
 )
 
 // GetSigners returns the expected signers for MsgSetFeePayer
@@ -26,6 +27,15 @@ func (m *MsgSetFeePayer) ValidateBasic() error {
 
 	if _, err := ValidateFeePayerAddress(m.EvmFeePayer); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// ValidateBasic does a sanity check on the provided data
+func (m *MsgRemoveFeePayer) ValidateBasic() error {
+	if _, err := sdk.AccAddressFromBech32(m.Authority); err != nil {
+		return errorsmod.Wrap(err, "invalid authority address")
 	}
 
 	return nil

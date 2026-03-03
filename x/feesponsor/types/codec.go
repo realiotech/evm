@@ -27,6 +27,7 @@ func init() {
 // on the provided LegacyAmino codec. These types are used for Amino JSON serialization.
 func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgSetFeePayer{}, "cosmos/evm/MsgSetFeePayer", nil)
+	cdc.RegisterConcrete(&MsgRemoveFeePayer{}, "cosmos/evm/MsgRemoveFeePayer", nil)
 }
 
 // RegisterInterfaces registers the x/feesponsor interfaces types with the interface registry
@@ -34,8 +35,8 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 	registry.RegisterImplementations(
 		(*sdk.Msg)(nil),
 		&MsgSetFeePayer{},
+		&MsgRemoveFeePayer{},
 	)
 
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
 }
-
