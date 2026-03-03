@@ -57,6 +57,10 @@ func VerifyAccountBalance(
 	account *statedb.Account,
 	cost *big.Int,
 ) error {
+	if account == nil {
+		return errorsmod.Wrap(errortypes.ErrInvalidAddress, "account not found")
+	}
+	
 	if err := keeper.CheckSenderBalance(sdkmath.NewIntFromBigInt(account.Balance.ToBig()), cost); err != nil {
 		return errorsmod.Wrap(err, "failed to check sender balance")
 	}
