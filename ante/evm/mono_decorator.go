@@ -232,10 +232,9 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 			account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(globalFeePayer))
 
 			// Verify global fee account balance with tx fees
-			costWithoutValue := new(big.Int).Sub(ethTx.Cost(), ethTx.Value())
 			err = VerifyAccountBalance(
 				account,
-				costWithoutValue,
+				msgFees[0].Amount.BigInt(),
 			)
 			if err != nil {
 				haveSponsor = false
@@ -247,7 +246,7 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 					msgFees,
 					msgs,
 				)
-				// If grant is not enough, deduct fee from tx sender
+				// If grant is not enough or expired, deduct fee from tx sender
 				if err != nil {
 					haveSponsor = false
 				} else {
