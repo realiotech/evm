@@ -1,8 +1,6 @@
 package keeper
 
 import (
-	"fmt"
-
 	"github.com/cosmos/evm/x/feesponsor/types"
 
 	"cosmossdk.io/log"
@@ -54,7 +52,6 @@ func (k Keeper) GetAuthority() sdk.AccAddress {
 // SetFeePayerToStore sets the EVM fee payer to the store.
 func (k Keeper) SetFeePayerToStore(ctx sdk.Context, feePayerAddr []byte) {
 	store := ctx.KVStore(k.storeKey)
-	fmt.Println("store", k.storeKey)
 	store.Set(types.KeyPrefixFeePayer, feePayerAddr)
 }
 

@@ -181,9 +181,9 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	}
 
 	from := ethMsg.GetFrom()
-	haveSponpor := false
+	haveSponsor := false
 	feePayer := common.BytesToAddress(from)
-	gloalFeePayer, found := md.feesponsorKeeper.GetFeePayer(ctx)
+	globalFeePayer, found := md.feesponsorKeeper.GetFeePayer(ctx)
 
 	// 6. account verification and balance check
 
@@ -222,14 +222,14 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	// Check if we found a global fee payer and the account exists
 	if found {
 		grant, err := md.feegrantKeeper.Allowance(ctx, &feegrant.QueryAllowanceRequest{
-			Granter: sdk.AccAddress(gloalFeePayer).String(),
+			Granter: sdk.AccAddress(globalFeePayer).String(),
 			Grantee: from.String(),
 		})
 
 		// If have grant, check global fee payer can cover tx fee
 		// (not contains tx value)
 		if grant != nil && err == nil {
-			account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(gloalFeePayer))
+			account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(globalFeePayer))
 
 			// Verify global fee account balance with tx fees
 			costWithoutValue := new(big.Int).Sub(ethTx.Cost(), ethTx.Value())
@@ -238,28 +238,28 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 				costWithoutValue,
 			)
 			if err != nil {
-				haveSponpor = false
+				haveSponsor = false
 			} else {
 				err = md.feegrantKeeper.UseGrantedFees(
 					ctx,
-					gloalFeePayer,
+					globalFeePayer,
 					from,
 					msgFees,
 					msgs,
 				)
 				// If grant is not enough, deduct fee from tx sender
 				if err != nil {
-					haveSponpor = false
+					haveSponsor = false
 				} else {
-					haveSponpor = true
-					feePayer = common.BytesToAddress(gloalFeePayer)
+					haveSponsor = true
+					feePayer = common.BytesToAddress(globalFeePayer)
 				}
 			}
 		}
 	}
 
 	// If no fee sponsor, verify sender has enough balance for total cost (fees + value)
-	if !haveSponpor {
+	if !haveSponsor {
 		account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(from))
 
 		// Verify sender has enough balance for total cost (fees + value)
