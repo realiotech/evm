@@ -787,6 +787,7 @@ func (app *EVMD) setAnteHandler(txConfig client.TxConfig, maxGasWanted uint64) {
 		FeegrantKeeper:         app.FeeGrantKeeper,
 		IBCKeeper:              app.IBCKeeper,
 		FeeMarketKeeper:        app.FeeMarketKeeper,
+		FeesponsorKeeper:       app.FeeSponsorKeeper,
 		SignModeHandler:        txConfig.SignModeHandler(),
 		SigGasConsumer:         evmante.SigVerificationGasConsumer,
 		MaxTxGasWanted:         maxGasWanted,
