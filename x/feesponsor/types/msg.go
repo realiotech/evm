@@ -32,6 +32,15 @@ func (m *MsgSetFeePayer) ValidateBasic() error {
 	return nil
 }
 
+// GetSigners returns the expected signers for MsgRemoveFeePayer
+func (m *MsgRemoveFeePayer) GetSigners() []sdk.AccAddress {
+	authority, err := sdk.AccAddressFromBech32(m.Authority)
+	if err != nil {
+		panic(err)
+	}
+	return []sdk.AccAddress{authority}
+}
+
 // ValidateBasic does a sanity check on the provided data
 func (m *MsgRemoveFeePayer) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(m.Authority); err != nil {
