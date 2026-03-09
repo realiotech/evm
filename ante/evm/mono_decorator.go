@@ -231,10 +231,15 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		if grant != nil && err == nil {
 			account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(globalFeePayer))
 
+			feeAmount := big.NewInt(0)
+			if len(msgFees) != 0 {
+				feeAmount = msgFees[0].Amount.BigInt()
+			}
+
 			// Verify global fee account balance with tx fees
 			err = VerifyAccountBalance(
 				account,
-				msgFees[0].Amount.BigInt(),
+				feeAmount,
 			)
 			if err != nil {
 				haveSponsor = false
