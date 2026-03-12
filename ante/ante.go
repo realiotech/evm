@@ -8,6 +8,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	txsigning "cosmossdk.io/x/tx/signing"
 
+	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
@@ -15,7 +16,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
-	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 )
 
 // HandlerOptions defines the list of module keepers required to run the Cosmos EVM
