@@ -16,7 +16,7 @@ func (k Keeper) FeePayer(goCtx context.Context, _ *types.QueryFeePayerRequest) (
 
 	feePayer, found := k.GetFeePayer(ctx)
 	if !found {
-		return &types.QueryFeePayerResponse{}, nil
+		return &types.QueryFeePayerResponse{}, types.ErrFeePayerNotSet
 	}
 
 	return &types.QueryFeePayerResponse{
