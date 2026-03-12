@@ -243,6 +243,10 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 			)
 			if err != nil {
 				haveSponsor = false
+				ctx.Logger().Info("fee sponsor fallback: insufficient sponsor balance",
+					"sponsor", sdk.AccAddress(globalFeePayer).String(),
+					"sender", from.String(),
+				)
 			} else {
 				err = md.feegrantKeeper.UseGrantedFees(
 					ctx,
@@ -254,9 +258,18 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 				// If grant is not enough or expired, deduct fee from tx sender
 				if err != nil {
 					haveSponsor = false
+					ctx.Logger().Info("fee sponsor fallback: grant use failed",
+						"sponsor", sdk.AccAddress(globalFeePayer).String(),
+						"sender", from.String(),
+						"error", err.Error(),
+					)
 				} else {
 					haveSponsor = true
 					feePayer = common.BytesToAddress(globalFeePayer)
+					ctx.Logger().Info("fee sponsor: sponsor pays fee",
+						"sponsor", sdk.AccAddress(globalFeePayer).String(),
+						"sender", from.String(),
+					)
 				}
 			}
 		}
