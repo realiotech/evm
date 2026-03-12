@@ -264,10 +264,13 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 
 	// If no fee sponsor, verify sender has enough balance for total cost (fees + value)
 	if !haveSponsor {
-		account := md.evmKeeper.GetAccount(ctx, common.BytesToAddress(from))
-
 		// Verify sender has enough balance for total cost (fees + value)
 		if err := VerifyAccountBalance(account, ethTx.Cost()); err != nil {
+			return ctx, err
+		}
+	} else {
+		// Verify the sender has balance >= ethTx.Value()
+		if err := VerifyAccountBalance(account, ethTx.Value()); err != nil {
 			return ctx, err
 		}
 	}
