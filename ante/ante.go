@@ -1,8 +1,6 @@
 package ante
 
 import (
-	"context"
-
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
@@ -18,12 +16,6 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
 )
-
-// FeegrantKeeper defines the expected feegrant keeper.
-type FeegrantKeeper interface {
-	ante.FeegrantKeeper
-	UseGrantedFees(ctx context.Context, granter, grantee sdk.AccAddress, fee sdk.Coins, msgs []sdk.Msg) error
-}
 
 // HandlerOptions defines the list of module keepers required to run the Cosmos EVM
 // AnteHandler decorators.
