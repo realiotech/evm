@@ -17,7 +17,6 @@ import (
 	sdkmath "cosmossdk.io/math"
 
 	"cosmossdk.io/x/feegrant"
-	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
@@ -39,7 +38,7 @@ type MonoDecorator struct {
 	maxGasWanted     uint64
 	evmParams        *evmtypes.Params
 	feemarketParams  *feemarkettypes.Params
-	feegrantKeeper   feegrantkeeper.Keeper
+	feegrantKeeper   anteinterfaces.FeegrantKeeper
 	feesponsorKeeper feesponsorkeeper.Keeper
 }
 
@@ -53,7 +52,7 @@ func NewEVMMonoDecorator(
 	accountKeeper anteinterfaces.AccountKeeper,
 	feeMarketKeeper anteinterfaces.FeeMarketKeeper,
 	evmKeeper anteinterfaces.EVMKeeper,
-	feegrantKeeper feegrantkeeper.Keeper,
+	feegrantKeeper anteinterfaces.FeegrantKeeper,
 	feesponsorKeeper feesponsorkeeper.Keeper,
 	maxGasWanted uint64,
 	evmParams *evmtypes.Params,

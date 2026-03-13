@@ -1,6 +1,8 @@
 package ante
 
 import (
+	"context"
+
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
@@ -8,7 +10,6 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	txsigning "cosmossdk.io/x/tx/signing"
 
-	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
@@ -17,6 +18,12 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
 )
+
+// FeegrantKeeper defines the expected feegrant keeper.
+type FeegrantKeeper interface {
+	ante.FeegrantKeeper
+	UseGrantedFees(ctx context.Context, granter, grantee sdk.AccAddress, fee sdk.Coins, msgs []sdk.Msg) error
+}
 
 // HandlerOptions defines the list of module keepers required to run the Cosmos EVM
 // AnteHandler decorators.
@@ -27,7 +34,7 @@ type HandlerOptions struct {
 	IBCKeeper              *ibckeeper.Keeper
 	FeeMarketKeeper        anteinterfaces.FeeMarketKeeper
 	EvmKeeper              anteinterfaces.EVMKeeper
-	FeegrantKeeper         feegrantkeeper.Keeper
+	FeegrantKeeper         anteinterfaces.FeegrantKeeper
 	FeesponsorKeeper       feesponsorkeeper.Keeper
 	ExtensionOptionChecker ante.ExtensionOptionChecker
 	SignModeHandler        *txsigning.HandlerMap
