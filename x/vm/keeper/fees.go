@@ -19,9 +19,8 @@ import (
 // sender has enough funds to pay for the fees and value of the transaction.
 func CheckSenderBalance(
 	balance sdkmath.Int,
-	ethTx *ethtypes.Transaction,
+	cost *big.Int,
 ) error {
-	cost := ethTx.Cost()
 
 	if cost.Sign() < 0 {
 		return errorsmod.Wrapf(

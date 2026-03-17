@@ -15,6 +15,8 @@ func newMonoEVMAnteHandler(ctx sdk.Context, options HandlerOptions) sdk.AnteHand
 			options.AccountKeeper,
 			options.FeeMarketKeeper,
 			options.EvmKeeper,
+			options.FeegrantKeeper,
+			options.FeesponsorKeeper,
 			options.MaxTxGasWanted,
 			&evmParams,
 			&feemarketParams,

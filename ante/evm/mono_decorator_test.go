@@ -31,8 +31,10 @@ import (
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 
+	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
 )
 
 // adds missing methods
@@ -219,7 +221,9 @@ func TestMonoDecorator(t *testing.T) {
 			feeMarketKeeper := MockFeeMarketKeeper{}
 			params := keeper.GetParams(sdk.Context{})
 			feemarketParams := feeMarketKeeper.GetParams(sdk.Context{})
-			monoDec := evm.NewEVMMonoDecorator(accountKeeper, feeMarketKeeper, keeper, 0, &params, &feemarketParams)
+			feegrantKeeper := feegrantkeeper.Keeper{}
+			feesponsorKeeper := feesponsorkeeper.Keeper{}
+			monoDec := evm.NewEVMMonoDecorator(accountKeeper, feeMarketKeeper, keeper, feegrantKeeper, feesponsorKeeper, 0, &params, &feemarketParams)
 			ctx := sdk.NewContext(nil, tmproto.Header{}, false, log.NewNopLogger())
 			ctx = ctx.WithBlockGasMeter(storetypes.NewGasMeter(1e19))
 
