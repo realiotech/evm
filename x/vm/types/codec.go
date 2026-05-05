@@ -22,7 +22,8 @@ var (
 
 const (
 	// Amino names
-	updateParamsName = "os/evm/MsgUpdateParams"
+	updateParamsName       = "os/evm/MsgUpdateParams"
+	updateParamsNameLegacy = "os/MsgUpdateParams"
 )
 
 // NOTE: This is required for the GetSignBytes function
@@ -43,6 +44,7 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 		&MsgEthereumTx{},
 		&MsgUpdateParams{},
 		&legacy.MsgEthereumTx{}, // Legacy MsgEthereumTx
+		&legacy.MsgUpdateParams{},
 	)
 
 	// Register TxData implementations for unpacking legacy Any field
@@ -75,4 +77,5 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 // RegisterLegacyAminoCodec required for EIP-712
 func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgUpdateParams{}, updateParamsName, nil)
+	cdc.RegisterConcrete(&legacy.MsgUpdateParams{}, updateParamsNameLegacy, nil)
 }
