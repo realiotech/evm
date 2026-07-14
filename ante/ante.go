@@ -14,6 +14,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	feesponsorkeeper "github.com/cosmos/evm/x/feesponsor/keeper"
 )
 
 // HandlerOptions defines the list of module keepers required to run the Cosmos EVM
@@ -25,7 +26,8 @@ type HandlerOptions struct {
 	IBCKeeper              *ibckeeper.Keeper
 	FeeMarketKeeper        anteinterfaces.FeeMarketKeeper
 	EvmKeeper              anteinterfaces.EVMKeeper
-	FeegrantKeeper         ante.FeegrantKeeper
+	FeegrantKeeper         anteinterfaces.FeegrantKeeper
+	FeesponsorKeeper       feesponsorkeeper.Keeper
 	ExtensionOptionChecker ante.ExtensionOptionChecker
 	SignModeHandler        *txsigning.HandlerMap
 	SigGasConsumer         func(meter storetypes.GasMeter, sig signing.SignatureV2, params authtypes.Params) error

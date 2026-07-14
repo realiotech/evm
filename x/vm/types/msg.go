@@ -30,10 +30,11 @@ import (
 )
 
 var (
-	_ sdk.Msg    = &MsgEthereumTx{}
-	_ sdk.Tx     = &MsgEthereumTx{}
-	_ ante.GasTx = &MsgEthereumTx{}
-	_ sdk.Msg    = &MsgUpdateParams{}
+	_ sdk.Msg        = &MsgEthereumTx{}
+	_ sdk.Tx         = &MsgEthereumTx{}
+	_ ante.GasTx     = &MsgEthereumTx{}
+	_ EthereumTxMsg  = &MsgEthereumTx{}
+	_ sdk.Msg        = &MsgUpdateParams{}
 )
 
 // message type and route constants
@@ -300,6 +301,51 @@ func (msg *MsgEthereumTx) UnmarshalBinary(b []byte, signer ethtypes.Signer) erro
 
 func (msg *MsgEthereumTx) Hash() common.Hash {
 	return msg.AsTransaction().Hash()
+}
+
+// GetHash returns the transaction hash (implements EthereumTxMsg interface)
+func (msg *MsgEthereumTx) GetHash() common.Hash {
+	return msg.Hash()
+}
+
+// GetGasPrice returns the gas price for the transaction
+func (msg *MsgEthereumTx) GetGasPrice() *big.Int {
+	return msg.Raw.GasPrice()
+}
+
+// GetGasFeeCap returns the max fee per gas (EIP-1559) or gas price (legacy)
+func (msg *MsgEthereumTx) GetGasFeeCap() *big.Int {
+	return msg.Raw.GasFeeCap()
+}
+
+// GetGasTipCap returns the max priority fee (EIP-1559) or gas price (legacy)
+func (msg *MsgEthereumTx) GetGasTipCap() *big.Int {
+	return msg.Raw.GasTipCap()
+}
+
+// GetValue returns the transaction value
+func (msg *MsgEthereumTx) GetValue() *big.Int {
+	return msg.Raw.Value()
+}
+
+// GetNonce returns the transaction nonce
+func (msg *MsgEthereumTx) GetNonce() uint64 {
+	return msg.Raw.Nonce()
+}
+
+// GetTo returns the recipient address (nil for contract creation)
+func (msg *MsgEthereumTx) GetTo() *common.Address {
+	return msg.Raw.To()
+}
+
+// GetInputData returns the transaction input data
+func (msg *MsgEthereumTx) GetInputData() []byte {
+	return msg.Raw.Data()
+}
+
+// IsLegacy returns true if this is a legacy format message (new format is not legacy)
+func (msg *MsgEthereumTx) IsLegacy() bool {
+	return false
 }
 
 // BuildTx builds the canonical cosmos tx from ethereum msg

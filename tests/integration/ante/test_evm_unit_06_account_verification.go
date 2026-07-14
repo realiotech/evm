@@ -220,15 +220,21 @@ func (s *EvmUnitAnteTestSuite) TestVerifyAccountBalance() {
 			statedbAccount, txArgs := tc.generateAccountAndArgs()
 			ethTx := txArgs.ToTx()
 
-			//  Function to be tested
-			err := evm.VerifyAccountBalance(
+			account, err := evm.VerifyAccount(
 				unitNetwork.GetContext(),
 				unitNetwork.App.GetEVMKeeper(),
 				unitNetwork.App.GetAccountKeeper(),
 				statedbAccount,
 				senderKey.Addr,
-				ethTx,
 			)
+
+			// VerifyAccountBalance after VerifyAccount
+			if err == nil {
+				err = evm.VerifyAccountBalance(
+					account,
+					ethTx.Cost(),
+				)
+			}
 
 			if tc.expectedError != nil {
 				s.Require().Error(err)

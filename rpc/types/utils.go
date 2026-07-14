@@ -154,8 +154,9 @@ func MakeHeader(
 
 // NewTransactionFromMsg returns a transaction that will serialize to the RPC
 // representation, with the given location metadata set (if available).
+// Accepts EthereumTxMsg interface to support both legacy and new message formats.
 func NewTransactionFromMsg(
-	msg *evmtypes.MsgEthereumTx,
+	msg evmtypes.EthereumTxMsg,
 	blockHash common.Hash,
 	blockNumber, blockTime, index uint64,
 	baseFee *big.Int,

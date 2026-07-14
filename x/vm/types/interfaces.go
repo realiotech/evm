@@ -94,3 +94,48 @@ type BankWrapper interface {
 type ConsensusParamsKeeper interface {
 	Params(context.Context, *types.QueryParamsRequest) (*types.QueryParamsResponse, error)
 }
+
+// EthereumTxMsg is the common interface for both legacy and new MsgEthereumTx.
+// This allows the codebase to handle both transaction formats uniformly.
+type EthereumTxMsg interface {
+	sdk.Msg
+
+	// AsTransaction converts the message to a go-ethereum Transaction
+	AsTransaction() *ethtypes.Transaction
+
+	// GetFrom returns the sender address
+	GetFrom() sdk.AccAddress
+
+	// GetSenderLegacy returns the sender, falling back to signature recovery if needed
+	GetSenderLegacy(signer ethtypes.Signer) (common.Address, error)
+
+	// GetGas returns the gas limit
+	GetGas() uint64
+
+	// GetGasPrice returns the big.Int gas price
+	GetGasPrice() *big.Int
+
+	// GetGasFeeCap returns the max fee per gas (EIP-1559) or gas price (legacy)
+	GetGasFeeCap() *big.Int
+
+	// GetGasTipCap returns the max priority fee (EIP-1559) or gas price (legacy)
+	GetGasTipCap() *big.Int
+
+	// GetValue returns the transaction value
+	GetValue() *big.Int
+
+	// GetNonce returns the transaction nonce
+	GetNonce() uint64
+
+	// GetTo returns the recipient address (nil for contract creation)
+	GetTo() *common.Address
+
+	// GetInputData returns the transaction input data
+	GetInputData() []byte
+
+	// GetHash returns the transaction hash
+	GetHash() common.Hash
+
+	// IsLegacy returns true if this is a legacy format message
+	IsLegacy() bool
+}

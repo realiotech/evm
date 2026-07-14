@@ -1,0 +1,14 @@
+syntax = "proto3";
+package cosmos.evm.feesponsor.v1;
+
+import "cosmos_proto/cosmos.proto";
+
+
+option go_package = "github.com/cosmos/evm/x/feesponsor/types";
+
+// GenesisState defines the feesponsor module's genesis state.
+message GenesisState {
+  // fee_payer is the EVM fee payer configuration
+  string fee_payer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+

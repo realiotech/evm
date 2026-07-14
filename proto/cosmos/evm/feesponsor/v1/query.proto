@@ -1,0 +1,25 @@
+syntax = "proto3";
+package cosmos.evm.feesponsor.v1;
+
+import "google/api/annotations.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/cosmos/evm/x/feesponsor/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // FeePayer queries the current EVM fee payer
+  rpc FeePayer(QueryFeePayerRequest) returns (QueryFeePayerResponse) {
+    option (google.api.http).get = "/cosmos/evm/feesponsor/v1/fee_payer";
+  }
+}
+
+// QueryFeePayerRequest is the request type for the Query/FeePayer RPC method.
+message QueryFeePayerRequest {}
+
+// QueryFeePayerResponse is the response type for the Query/FeePayer RPC method.
+message QueryFeePayerResponse {
+  // fee_payer is the current EVM fee payer
+  string fee_payer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
