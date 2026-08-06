@@ -148,7 +148,7 @@ func CreateAndValidateMsgTransfer(
 	timeoutTimestamp uint64,
 	memo string,
 ) (*transfertypes.MsgTransfer, error) {
-	msg := transfertypes.NewMsgTransfer(
+	msg := transfertypes.NewMsgTransferWithEncoding(
 		sourcePort,
 		sourceChannel,
 		coin,
@@ -157,6 +157,7 @@ func CreateAndValidateMsgTransfer(
 		timeoutHeight,
 		timeoutTimestamp,
 		memo,
+		transfertypes.EncodingABI,
 	)
 
 	if err := msg.ValidateBasic(); err != nil {
