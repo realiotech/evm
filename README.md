@@ -15,13 +15,6 @@ release after the audit, key stability features and benchmarking are completed.
 
 **Visit the official documentation for Cosmos EVM**: [evm.cosmos.network](https://evm.cosmos.network/)
 
-## What is Cosmos EVM?
-
-Cosmos EVM is a plug-and-play solution that adds EVM compatibility and customizability to your Cosmos SDK chain. Cosmos EVM equips Cosmos chains with complete Ethereum capabilities: Solidity smart contracts, Ethereum JSON-RPC, native support for the EVM wallet/token/user experience, and access to the entire Ethereum developer ecosystem. Its precompiles and extensions allow developers to leverage modules like [IBC](https://github.com/cosmos/ibc-go) with EVM and get native ERC-20 support for tokens on Cosmos. 
-
-Cosmos EVM is customizable for your business use case, chain architecture, and performance needs.
-
-
 ## Integration
 
 Cosmos EVM can be integrated into your existing chain
