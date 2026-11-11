@@ -12,6 +12,8 @@
 
 ### BUG FIXES
 
+- [GHSA-pqc8-5qh6-qxjg](https://github.com/cosmos/evm/security/advisories/GHSA-pqc8-5qh6-qxjg) Stop applying the StateDB gas refund counter to internal EVM calls (e.g. from precompiles, the ERC20 module, or other native modules).
+
 ## v0.6.5
 
 ### BUG FIXES

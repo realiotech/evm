@@ -911,6 +911,34 @@ func (s *KeeperTestSuite) TestApplyMessageChargesGasOnCommitError() {
 	s.Require().GreaterOrEqual(gasMeter.GasConsumed()-gasBefore, sdkGasConsumed+res.GasUsed)
 }
 
+func (s *KeeperTestSuite) TestApplyMessageInternalCallIgnoresRefundCounter() {
+	s.SetupTest()
+
+	sender := s.Keyring.GetKey(0)
+	recipient := s.Keyring.GetAddr(1)
+	transferArgs := types.EvmTxArgs{
+		To:     &recipient,
+		Amount: big.NewInt(100),
+	}
+	coreMsg, err := s.Factory.GenerateGethCoreMsg(sender.Priv, transferArgs)
+	s.Require().NoError(err)
+
+	stateDB := statedb.New(s.Network.GetContext(), s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	// Simulate a stale refund left in the shared StateDB by a previous
+	// internal EVM call (e.g. a contract that cleared preinitialized storage).
+	stateDB.AddRefund(4800)
+
+	res, err := s.Network.App.GetEVMKeeper().ApplyMessage(s.Network.GetContext(), stateDB, *coreMsg, nil, true, false, true)
+	s.Require().NoError(err)
+	s.Require().False(res.Failed())
+	// The internal call performs a plain transfer, which earns no refund, so it
+	// must be charged the full transfer gas without any discount from the
+	// stale refund counter. The refund stays in the StateDB for the outer
+	// transaction's final accounting.
+	s.Require().Equal(params.TxGas, res.GasUsed)
+	s.Require().Equal(uint64(4800), stateDB.GetRefund())
+}
+
 func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 	s.EnableFeemarket = true
 	defer func() { s.EnableFeemarket = false }()

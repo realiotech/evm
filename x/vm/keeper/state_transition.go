@@ -496,17 +496,19 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		refundQuotient = params.RefundQuotientEIP3529
 	}
 
-	if internal {
-		refundQuotient = 1 // full refund on internal calls
-	}
-
 	// calculate gas refund
 	if msg.GasLimit < leftoverGas {
 		return nil, errorsmod.Wrap(types.ErrGasOverflow, "apply message")
 	}
 	// refund gas
 	maxUsedGas := msg.GasLimit - leftoverGas
-	refund := GasToRefund(stateDB.GetRefund(), maxUsedGas, refundQuotient)
+	var refund uint64
+	if !internal {
+		// Internal calls are not charged for refunds.
+		// Refunds earned during internal calls remain in the StateDB and are applied
+		// once, EIP-3529-capped, at the end of the outer transaction.
+		refund = GasToRefund(stateDB.GetRefund(), maxUsedGas, refundQuotient)
+	}
 
 	// update leftoverGas and temporaryGasUsed with refund amount
 	leftoverGas += refund
