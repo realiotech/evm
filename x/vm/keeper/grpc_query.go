@@ -805,6 +805,18 @@ func (k *Keeper) traceTxWithMsg(
 		TxHash:    txConfig.TxHash,
 	}
 
+	// Define a meaningful timeout of a single transaction trace. The timeout is
+	// parsed and validated before any caller-supplied tracer is constructed.
+	// Note that the deadline itself is only installed after construction.
+	if traceConfig.Timeout != "" {
+		if timeout, err = time.ParseDuration(traceConfig.Timeout); err != nil {
+			return nil, 0, status.Errorf(codes.InvalidArgument, "timeout value: %s", err.Error())
+		}
+		if timeout <= 0 {
+			return nil, 0, status.Errorf(codes.InvalidArgument, "timeout must be positive, got %s", timeout)
+		}
+	}
+
 	if traceConfig.Tracer != "" {
 		var cfg json.RawMessage
 		if traceConfig.TracerJsonConfig != "" {
@@ -813,13 +825,6 @@ func (k *Keeper) traceTxWithMsg(
 		if tracer, err = tracers.DefaultDirectory.New(traceConfig.Tracer, tCtx, cfg,
 			types.GetEthChainConfig()); err != nil {
 			return nil, 0, status.Error(codes.Internal, err.Error())
-		}
-	}
-
-	// Define a meaningful timeout of a single transaction trace
-	if traceConfig.Timeout != "" {
-		if timeout, err = time.ParseDuration(traceConfig.Timeout); err != nil {
-			return nil, 0, status.Errorf(codes.InvalidArgument, "timeout value: %s", err.Error())
 		}
 	}
 
