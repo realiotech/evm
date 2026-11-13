@@ -465,7 +465,12 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		// - reset sender's nonce to msg.Nonce() before calling evm.
 		// - increase sender's nonce by one no matter the result.
 		stateDB.SetNonce(sender.Address(), msg.Nonce, tracing.NonceChangeEoACall)
+		snapshot := stateDB.Snapshot()
 		ret, _, leftoverGas, vmErr = evm.Create(sender.Address(), msg.Data, leftoverGas, convertedValue)
+		if logErr := stateDB.LogLimitError(); logErr != nil {
+			stateDB.RevertToSnapshot(snapshot)
+			ret, leftoverGas, vmErr = nil, 0, logErr
+		}
 		stateDB.SetNonce(sender.Address(), msg.Nonce+1, tracing.NonceChangeContractCreator)
 	} else {
 		// Apply EIP-7702 authorizations.
@@ -486,7 +491,12 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		if addr, ok := ethtypes.ParseDelegation(stateDB.GetCode(*msg.To)); ok {
 			stateDB.AddAddressToAccessList(addr)
 		}
+		snapshot := stateDB.Snapshot()
 		ret, leftoverGas, vmErr = evm.Call(sender.Address(), *msg.To, msg.Data, leftoverGas, convertedValue)
+		if logErr := stateDB.LogLimitError(); logErr != nil {
+			stateDB.RevertToSnapshot(snapshot)
+			ret, leftoverGas, vmErr = nil, 0, logErr
+		}
 	}
 
 	refundQuotient := params.RefundQuotient

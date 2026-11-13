@@ -1853,6 +1853,7 @@ func (s *KeeperTestSuite) TestQueryBaseFee() {
 				chainConfig.ShanghaiTime = &maxInt
 				chainConfig.CancunTime = &maxInt
 				chainConfig.PragueTime = &maxInt
+				chainConfig.OsakaTime = &maxInt
 
 				configurator := types.NewEVMConfigurator()
 				configurator.ResetTestConfig()
@@ -2030,6 +2031,33 @@ func (s *KeeperTestSuite) TestEthCall() {
 			s.Require().NoError(err)
 		})
 	}
+}
+
+func (s *KeeperTestSuite) TestEthCallLogLimit() {
+	s.SetupTest()
+
+	sender := s.Keyring.GetAddr(0)
+	// creation code emitting five 1 MiB LOG0 records, then STOP:
+	// 5 x (PUSH3 0x100000, PUSH0, LOG0), STOP
+	var code hexutil.Bytes
+	for i := 0; i < 5; i++ {
+		code = append(code, 0x62, 0x10, 0x00, 0x00, 0x5f, 0xa0)
+	}
+	code = append(code, 0x00)
+
+	gas := hexutil.Uint64(50_000_000)
+	args, err := json.Marshal(&types.TransactionArgs{
+		From: &sender,
+		Data: &code,
+		Gas:  &gas,
+	})
+	s.Require().NoError(err)
+
+	res, err := s.Network.GetEvmClient().EthCall(s.Network.GetContext(), &types.EthCallRequest{Args: args, GasCap: uint64(gas)})
+	s.Require().NoError(err)
+	s.Require().Contains(res.VmError, "max log data size per transaction")
+	s.Require().Empty(res.Logs)
+	s.Require().Equal(uint64(gas), res.GasUsed)
 }
 
 func (s *KeeperTestSuite) TestBalance() {
