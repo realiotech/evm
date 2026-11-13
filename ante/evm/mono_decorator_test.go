@@ -38,12 +38,19 @@ import (
 // adds missing methods
 type ExtendedEVMKeeper struct {
 	*vmtypes.EVMKeeper
+	// anteVerifiedSendersByTxHash holds every sender the decorator recorded.
+	anteVerifiedSendersByTxHash map[common.Hash]common.Address
 }
 
 func NewExtendedEVMKeeper() *ExtendedEVMKeeper {
 	return &ExtendedEVMKeeper{
-		EVMKeeper: vmtypes.NewEVMKeeper(),
+		EVMKeeper:                   vmtypes.NewEVMKeeper(),
+		anteVerifiedSendersByTxHash: map[common.Hash]common.Address{},
 	}
+}
+
+func (k *ExtendedEVMKeeper) SetAnteVerifiedSender(_ sdk.Context, ethTxHash common.Hash, verifiedSender common.Address) {
+	k.anteVerifiedSendersByTxHash[ethTxHash] = verifiedSender
 }
 
 func (k *ExtendedEVMKeeper) NewEVM(_ sdk.Context, _ core.Message, _ *statedb.EVMConfig, _ *tracing.Hooks, _ vm.StateDB) *vm.EVM {
@@ -231,8 +238,14 @@ func TestMonoDecorator(t *testing.T) {
 			if tc.expErr == "" {
 				require.NoError(t, err)
 				require.NotNil(t, newCtx)
+
+				// the tx that passed is recorded for the msg server, under its signer
+				signerAddr := common.BytesToAddress(privKey.PubKey().Address().Bytes())
+				expectedVerifiedSenders := map[common.Hash]common.Address{msgs[0].Hash(): signerAddr}
+				require.Equal(t, expectedVerifiedSenders, keeper.anteVerifiedSendersByTxHash)
 			} else {
 				require.ErrorContains(t, err, tc.expErr)
+				require.Empty(t, keeper.anteVerifiedSendersByTxHash, "a rejected tx must not be recorded as verified")
 			}
 		})
 	}

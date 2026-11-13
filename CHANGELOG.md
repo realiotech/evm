@@ -23,6 +23,8 @@
 ### BUG FIXES
 - [\#1107](https://github.com/cosmos/evm/pull/1107) Skip StateDB commit error transactions during receipt conversion and indexing to prevent `invalid message index` errors in block RPCs. Blocks indexed before this release that contain such a transaction keep their old entries until the EVM indexer is rebuilt.
 
+- [GHSA-rr88-2jvc-fqwm](https://github.com/cosmos/evm/security/advisories/GHSA-rr88-2jvc-fqwm) (state-breaking) Reject a `MsgEthereumTx` in its msg handler unless the EVM ante handler verified it for the same sender in the same tx, so it can no longer be executed through paths that bypass the ante handlers (interchain accounts, governance proposals, authz, or any other module that dispatches msgs). Chains with a custom EVM ante handler must call `SetAnteVerifiedSender`, see the [v0.6.6 migration guide](docs/migrations/v0.6.5_to_v0.6.6.md). Also add `DenyListMsgRouter`, a message router that returns no handler for a list of denied msg types, for chains whose ante handler enforces rules on other msg types that must not be dispatched by another module. It is not needed for `MsgEthereumTx` and evmd does not use it.
+
 ## v0.6.4
 
 ### BUG FIXES
@@ -46,7 +48,8 @@
 - [\#1238](https://github.com/cosmos/evm/pull/1238) Validate ICS-20 acknowledgement encoding in the erc20 IBC v2 middleware.
 
 ### BUG FIXES
-- Align precompile gas calculation with expected EVM gas semantics.
+- [\#1223](https://github.com/cosmos/evm/pull/1223) Reject EVM txs below the base fee at mempool insert instead of silently queuing them.
+- [\#1050](https://github.com/cosmos/evm/pull/1050) Align precompile gas calculation with expected EVM gas semantics.
 
 ## v0.6.0
 

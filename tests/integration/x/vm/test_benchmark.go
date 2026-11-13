@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	testconstants "github.com/cosmos/evm/testutil/constants"
+	"github.com/cosmos/evm/testutil/integration/evm/utils"
 	utiltx "github.com/cosmos/evm/testutil/tx"
 	"github.com/cosmos/evm/x/vm/keeper/testdata"
 	"github.com/cosmos/evm/x/vm/types"
@@ -76,7 +77,7 @@ func DoBenchmark(b *testing.B, txBuilder TxBuilder) {
 		err = authante.DeductFees(suite.Network.App.GetBankKeeper(), suite.Network.GetContext(), suite.Network.App.GetAccountKeeper().GetAccount(ctx, msg.GetFrom()), fees)
 		require.NoError(b, err)
 
-		rsp, err := suite.Network.App.GetEVMKeeper().EthereumTx(ctx, msg)
+		rsp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, suite.Network.App.GetEVMKeeper(), msg)
 		require.NoError(b, err)
 		require.False(b, rsp.Failed())
 	}
@@ -201,7 +202,7 @@ func BenchmarkMessageCall(b *testing.B) {
 		err = authante.DeductFees(suite.Network.App.GetBankKeeper(), suite.Network.GetContext(), suite.Network.App.GetAccountKeeper().GetAccount(ctx, msg.GetFrom()), fees)
 		require.NoError(b, err)
 
-		rsp, err := suite.Network.App.GetEVMKeeper().EthereumTx(ctx, msg)
+		rsp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, suite.Network.App.GetEVMKeeper(), msg)
 		require.NoError(b, err)
 		require.False(b, rsp.Failed())
 	}
