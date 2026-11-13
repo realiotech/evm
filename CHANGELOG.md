@@ -12,6 +12,7 @@
 
 ### BUG FIXES
 
+- [GHSA-gmmv-9r53-wg5g](https://github.com/cosmos/evm/security/advisories/GHSA-gmmv-9r53-wg5g) Cap the `eth_feeHistory` `rewardPercentiles` count at 100 and reject duplicate percentiles, restoring the upstream `maxQueryLimit` guard so a single JSON-RPC request can no longer allocate a multi-gigabyte reward matrix.
 - [GHSA-wgpp-mgq4-63f9](https://github.com/cosmos/evm/security/advisories/GHSA-wgpp-mgq4-63f9) Revert the multistore snapshot when a precompile call is rejected by the per-transaction call limit, so rejected calls no longer leak cache layers that are only written at commit time and delay block production.
 - [GHSA-pqc8-5qh6-qxjg](https://github.com/cosmos/evm/security/advisories/GHSA-pqc8-5qh6-qxjg) Stop applying the StateDB gas refund counter to internal EVM calls (e.g. from precompiles, the ERC20 module, or other native modules).
 
