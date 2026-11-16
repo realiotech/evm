@@ -368,7 +368,7 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 
 	// The MsgEthereumTx handler only executes a tx recorded here, which is how
 	// it rejects messages that another message dispatched around this handler.
-	md.evmKeeper.SetAnteVerifiedSender(ctx, ethTx.Hash(), fromAddr)
+	md.evmKeeper.SetAnteVerifiedSender(ctx, ethTx.Hash(), common.BytesToAddress(from))
 
 	return next(ctx, tx, simulate)
 }
