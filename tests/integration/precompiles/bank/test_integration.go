@@ -277,7 +277,7 @@ func TestIntegrationSuite(t *testing.T, create network.CreateEvmApp, options ...
 
 					txArgs := evmtypes.EvmTxArgs{
 						To:       &bankCallerContractAddr,
-						GasLimit: 20_000_000,
+						GasLimit: 16_000_000,
 					}
 					callArgs := testutiltypes.CallArgs{
 						ContractABI: bankCallerContract.ABI,

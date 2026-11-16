@@ -24,6 +24,7 @@ import (
 	"github.com/cosmos/evm/testutil/integration/evm/utils"
 	testKeyring "github.com/cosmos/evm/testutil/keyring"
 	utiltx "github.com/cosmos/evm/testutil/tx"
+	erc20types "github.com/cosmos/evm/x/erc20/types"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/statedb"
@@ -863,6 +864,79 @@ func (s *KeeperTestSuite) TestApplyMessage() {
 			}
 		})
 	}
+}
+
+func (s *KeeperTestSuite) TestApplyMessageChargesGasOnCommitError() {
+	s.EnableFeemarket = true
+	defer func() { s.EnableFeemarket = false }()
+	s.SetupTest()
+
+	sender := s.Keyring.GetKey(0)
+	// A transfer to a blocked module account succeeds at the EVM level but
+	// fails during StateDB.Commit with "is not allowed to receive funds".
+	recipient := common.BytesToAddress(authtypes.NewModuleAddress(erc20types.ModuleName).Bytes())
+	transferArgs := types.EvmTxArgs{
+		To:     &recipient,
+		Amount: big.NewInt(100),
+	}
+	coreMsg, err := s.Factory.GenerateGethCoreMsg(sender.Priv, transferArgs)
+	s.Require().NoError(err)
+
+	// Baseline: run the same message with commit=false to measure how much
+	// gas the surrounding SDK work consumes, and how much EVM gas the call
+	// used, without charging or committing anything.
+	baselineMeter := storetypes.NewGasMeter(100_000_000)
+	baselineCtx := s.Network.GetContext().WithGasMeter(baselineMeter)
+	baselineDB := statedb.New(baselineCtx, s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	baselineGasBefore := baselineMeter.GasConsumed()
+	res, err := s.Network.App.GetEVMKeeper().ApplyMessage(baselineCtx, baselineDB, *coreMsg, nil, false, false, true)
+	s.Require().NoError(err)
+	sdkGasConsumed := baselineMeter.GasConsumed() - baselineGasBefore
+	s.Require().Equal(params.TxGas, res.GasUsed)
+
+	// Now run the same message with commit=true so that StateDB.Commit
+	// fails on the blocked module account balance change.
+	gasMeter := storetypes.NewGasMeter(100_000_000)
+	ctx := s.Network.GetContext().WithGasMeter(gasMeter)
+	stateDB := statedb.New(ctx, s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+
+	gasBefore := gasMeter.GasConsumed()
+	_, err = s.Network.App.GetEVMKeeper().ApplyMessage(ctx, stateDB, *coreMsg, nil, true, false, true)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "failed to commit stateDB")
+	s.Require().Contains(err.Error(), "is not allowed to receive funds")
+
+	// The EVM work was performed; its gas must not be dropped on the error
+	// path, even though the commit failed after execution.
+	s.Require().GreaterOrEqual(gasMeter.GasConsumed()-gasBefore, sdkGasConsumed+res.GasUsed)
+}
+
+func (s *KeeperTestSuite) TestApplyMessageInternalCallIgnoresRefundCounter() {
+	s.SetupTest()
+
+	sender := s.Keyring.GetKey(0)
+	recipient := s.Keyring.GetAddr(1)
+	transferArgs := types.EvmTxArgs{
+		To:     &recipient,
+		Amount: big.NewInt(100),
+	}
+	coreMsg, err := s.Factory.GenerateGethCoreMsg(sender.Priv, transferArgs)
+	s.Require().NoError(err)
+
+	stateDB := statedb.New(s.Network.GetContext(), s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	// Simulate a stale refund left in the shared StateDB by a previous
+	// internal EVM call (e.g. a contract that cleared preinitialized storage).
+	stateDB.AddRefund(4800)
+
+	res, err := s.Network.App.GetEVMKeeper().ApplyMessage(s.Network.GetContext(), stateDB, *coreMsg, nil, true, false, true)
+	s.Require().NoError(err)
+	s.Require().False(res.Failed())
+	// The internal call performs a plain transfer, which earns no refund, so it
+	// must be charged the full transfer gas without any discount from the
+	// stale refund counter. The refund stays in the StateDB for the outer
+	// transaction's final accounting.
+	s.Require().Equal(params.TxGas, res.GasUsed)
+	s.Require().Equal(uint64(4800), stateDB.GetRefund())
 }
 
 func (s *KeeperTestSuite) TestApplyMessageWithConfig() {

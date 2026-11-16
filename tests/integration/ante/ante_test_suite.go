@@ -109,6 +109,7 @@ func (s *AnteTestSuite) SetupTest() {
 		chainConfig.ShanghaiTime = &maxInt
 		chainConfig.CancunTime = &maxInt
 		chainConfig.PragueTime = &maxInt
+		chainConfig.OsakaTime = &maxInt
 	}
 
 	// get the denom and decimals set when initialized the chain

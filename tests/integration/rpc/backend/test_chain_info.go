@@ -601,3 +601,26 @@ func (s *TestSuite) TestFeeHistory() {
 		})
 	}
 }
+
+func (s *TestSuite) TestFeeHistoryRewardPercentiles() {
+	overLimit := make([]float64, 101)
+	for i := range overLimit {
+		overLimit[i] = float64(i)
+	}
+	testCases := []struct {
+		name              string
+		rewardPercentiles []float64
+	}{
+		{"fail - duplicate percentiles", []float64{25, 50, 50}},
+		{"fail - decreasing percentiles", []float64{75, 25}},
+		{"fail - percentile out of range", []float64{101}},
+		{"fail - over the query limit", overLimit},
+	}
+	for _, tc := range testCases {
+		s.Run(fmt.Sprintf("case %s", tc.name), func() {
+			s.SetupTest()
+			_, err := s.backend.FeeHistory(1, 1, tc.rewardPercentiles)
+			s.Require().ErrorContains(err, "invalid reward percentile")
+		})
+	}
+}

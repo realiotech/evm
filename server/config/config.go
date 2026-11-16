@@ -122,6 +122,9 @@ const (
 
 	// DefaultEnableProfiling toggles whether profiling is enabled in the `debug` namespace
 	DefaultEnableProfiling = false
+
+	// DefaultEnableCustomJSTracers toggles whether trace queries accept custom JavaScript tracer code
+	DefaultEnableCustomJSTracers = false
 )
 
 var evmTracers = []string{"json", "markdown", "struct", "access_list"}
@@ -260,6 +263,9 @@ type JSONRPCConfig struct {
 	WSOrigins []string `mapstructure:"ws-origins"`
 	// EnableProfiling enables the profiling in the `debug` namespace. SHOULD NOT be used on public tracing nodes
 	EnableProfiling bool `mapstructure:"enable-profiling"`
+	// EnableCustomJSTracers allows trace queries to evaluate caller-supplied JavaScript tracer code.
+	// SHOULD NOT be used on nodes that serve untrusted trace requests
+	EnableCustomJSTracers bool `mapstructure:"enable-custom-js-tracers"`
 }
 
 // TLSConfig defines the certificate and matching private key for the server.
@@ -318,28 +324,29 @@ func GetDefaultWSOrigins() []string {
 // DefaultJSONRPCConfig returns an EVM config with the JSON-RPC API enabled by default
 func DefaultJSONRPCConfig() *JSONRPCConfig {
 	return &JSONRPCConfig{
-		Enable:               false,
-		API:                  GetDefaultAPINamespaces(),
-		Address:              DefaultJSONRPCAddress,
-		WsAddress:            DefaultJSONRPCWsAddress,
-		GasCap:               DefaultGasCap,
-		AllowInsecureUnlock:  DefaultJSONRPCAllowInsecureUnlock,
-		EVMTimeout:           DefaultEVMTimeout,
-		TxFeeCap:             DefaultTxFeeCap,
-		FilterCap:            DefaultFilterCap,
-		FeeHistoryCap:        DefaultFeeHistoryCap,
-		BlockRangeCap:        DefaultBlockRangeCap,
-		LogsCap:              DefaultLogsCap,
-		HTTPTimeout:          DefaultHTTPTimeout,
-		HTTPIdleTimeout:      DefaultHTTPIdleTimeout,
-		AllowUnprotectedTxs:  DefaultAllowUnprotectedTxs,
-		BatchRequestLimit:    DefaultBatchRequestLimit,
-		BatchResponseMaxSize: DefaultBatchResponseMaxSize,
-		MaxOpenConnections:   DefaultMaxOpenConnections,
-		EnableIndexer:        false,
-		MetricsAddress:       DefaultJSONRPCMetricsAddress,
-		WSOrigins:            GetDefaultWSOrigins(),
-		EnableProfiling:      DefaultEnableProfiling,
+		Enable:                false,
+		API:                   GetDefaultAPINamespaces(),
+		Address:               DefaultJSONRPCAddress,
+		WsAddress:             DefaultJSONRPCWsAddress,
+		GasCap:                DefaultGasCap,
+		AllowInsecureUnlock:   DefaultJSONRPCAllowInsecureUnlock,
+		EVMTimeout:            DefaultEVMTimeout,
+		TxFeeCap:              DefaultTxFeeCap,
+		FilterCap:             DefaultFilterCap,
+		FeeHistoryCap:         DefaultFeeHistoryCap,
+		BlockRangeCap:         DefaultBlockRangeCap,
+		LogsCap:               DefaultLogsCap,
+		HTTPTimeout:           DefaultHTTPTimeout,
+		HTTPIdleTimeout:       DefaultHTTPIdleTimeout,
+		AllowUnprotectedTxs:   DefaultAllowUnprotectedTxs,
+		BatchRequestLimit:     DefaultBatchRequestLimit,
+		BatchResponseMaxSize:  DefaultBatchResponseMaxSize,
+		MaxOpenConnections:    DefaultMaxOpenConnections,
+		EnableIndexer:         false,
+		MetricsAddress:        DefaultJSONRPCMetricsAddress,
+		WSOrigins:             GetDefaultWSOrigins(),
+		EnableProfiling:       DefaultEnableProfiling,
+		EnableCustomJSTracers: DefaultEnableCustomJSTracers,
 	}
 }
 

@@ -22,6 +22,7 @@ type EVMKeeper interface {
 	NewEVM(ctx sdk.Context, msg core.Message, cfg *statedb.EVMConfig, tracer *tracing.Hooks,
 		stateDB vm.StateDB) *vm.EVM
 	DeductTxCostsFromUserBalance(ctx sdk.Context, fees sdk.Coins, from common.Address) error
+	SetAnteVerifiedSender(ctx sdk.Context, ethTxHash common.Hash, verifiedSender common.Address)
 	SpendableCoin(ctx sdk.Context, addr common.Address) *uint256.Int
 	ResetTransientGasUsed(ctx sdk.Context)
 	GetTxIndexTransient(ctx sdk.Context) uint64

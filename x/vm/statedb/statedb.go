@@ -73,12 +73,17 @@ type StateDB struct {
 
 	// Per-transaction logs
 	logs []*ethtypes.Log
+	// Aggregate data size of the retained logs
+	logsDataSize int
+	// logLimitErr is set when a log is dropped because the per-transaction
+	// log limits were reached. It is never cleared.
+	logLimitErr error
 
 	// Per-transaction access list
 	accessList *accessList
 
 	// The count of calls to precompiles
-	precompileCallsCounter uint8
+	precompileCallsCounter uint64
 
 	// processedEventsCount tracks how many events have been
 	// processed by BalanceHandler. Events are processed sequentially starting
@@ -219,12 +224,33 @@ func (s *StateDB) cache() error {
 }
 
 // AddLog adds a log, called by evm.
+// Logs exceeding MaxLogsPerTx or MaxLogDataBytesPerTx are dropped and
+// LogLimitError reports the failure.
 func (s *StateDB) AddLog(log *ethtypes.Log) {
+	if s.logLimitErr != nil {
+		return
+	}
+	if len(s.logs) >= types.MaxLogsPerTx {
+		s.logLimitErr = fmt.Errorf("max number of logs per transaction (%d) exceeded", types.MaxLogsPerTx)
+		return
+	}
+	if len(log.Data) > types.MaxLogDataBytesPerTx-s.logsDataSize {
+		s.logLimitErr = fmt.Errorf("max log data size per transaction (%d bytes) exceeded", types.MaxLogDataBytesPerTx)
+		return
+	}
+
 	s.journal.append(addLogChange{})
 
 	log.TxIndex = s.txConfig.TxIndex
 	log.Index = s.txConfig.LogIndex + uint(len(s.logs))
 	s.logs = append(s.logs, log)
+	s.logsDataSize += len(log.Data)
+}
+
+// LogLimitError returns a non-nil error if a log was dropped because the
+// per-transaction log limits were reached.
+func (s *StateDB) LogLimitError() error {
+	return s.logLimitErr
 }
 
 // Logs returns the logs of current transaction.
@@ -440,15 +466,18 @@ func (s *StateDB) AddPrecompileFn(snapshot int) error {
 	// Capture events before the precompile call
 	prevEvents := s.cacheCtx.EventManager().Events()
 
+	// Reject before mutating the counter so that rejected calls cannot
+	// advance (and eventually wrap) it back into the accepted range.
+	if s.precompileCallsCounter >= types.MaxPrecompileCalls {
+		return fmt.Errorf("max calls to precompiles (%d) reached", types.MaxPrecompileCalls)
+	}
+
 	s.journal.append(precompileCallChange{
 		snapshot:                snapshot,
 		prevEvents:              prevEvents,
 		prevProcessedEventCount: s.processedEventsCount,
 	})
 	s.precompileCallsCounter++
-	if s.precompileCallsCounter > types.MaxPrecompileCalls {
-		return fmt.Errorf("max calls to precompiles (%d) reached", types.MaxPrecompileCalls)
-	}
 	return nil
 }
 

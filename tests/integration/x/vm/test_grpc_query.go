@@ -16,6 +16,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cosmos/evm/server"
 	"github.com/cosmos/evm/server/config"
 	testconstants "github.com/cosmos/evm/testutil/constants"
 	"github.com/cosmos/evm/testutil/integration/evm/factory"
@@ -979,6 +980,7 @@ func getDefaultTraceTxRequest(unitNetwork network.Network) *types.QueryTraceTxRe
 }
 
 func (s *KeeperTestSuite) TestTraceTx() {
+	server.DisableCustomJSTracers()
 	s.EnableFeemarket = true
 	defer func() { s.EnableFeemarket = false }()
 	s.SetupTest()
@@ -1043,8 +1045,7 @@ func (s *KeeperTestSuite) TestTraceTx() {
 			getPredecessors: func() []*types.MsgEthereumTx {
 				return nil
 			},
-			expPass:       true,
-			expectedTrace: "[]",
+			expPass: false,
 		},
 		{
 			msg: "default tracer with predecessors",
@@ -1326,6 +1327,7 @@ func (s *KeeperTestSuite) TestTraceTx() {
 }
 
 func (s *KeeperTestSuite) TestTraceBlock() {
+	server.DisableCustomJSTracers()
 	s.EnableFeemarket = true
 	defer func() { s.EnableFeemarket = false }()
 	s.SetupTest()
@@ -1385,7 +1387,7 @@ func (s *KeeperTestSuite) TestTraceBlock() {
 				return nil
 			},
 			expPass:       true,
-			traceResponse: "[{\"result\":[]}]",
+			traceResponse: "custom JavaScript tracer code is not allowed",
 		},
 		{
 			msg: "tracer with multiple transactions",
@@ -1445,8 +1447,8 @@ func (s *KeeperTestSuite) TestTraceBlock() {
 				return nil
 			},
 			expPass: true,
-			traceResponse: "[{\"error\":\"rpc error: code = Internal desc = ReferenceError: invalid_tracer is not" +
-				" defined",
+			traceResponse: "[{\"error\":\"rpc error: code = Internal desc = custom JavaScript tracer code is not" +
+				" allowed",
 		},
 	}
 
@@ -1502,7 +1504,12 @@ func (s *KeeperTestSuite) TestTraceBlock() {
 	}
 }
 
+// jsTracerEvaluatedMarker is thrown by JavaScript tracer constructors used in
+// tests to detect that caller-supplied tracer code was evaluated.
+const jsTracerEvaluatedMarker = "js tracer constructor evaluated"
+
 func (s *KeeperTestSuite) TestTraceCall() {
+	server.DisableCustomJSTracers()
 	s.EnableFeemarket = true
 	defer func() { s.EnableFeemarket = false }()
 	s.SetupTest()
@@ -1523,6 +1530,7 @@ func (s *KeeperTestSuite) TestTraceCall() {
 		getTraceConfig func() *types.TraceConfig
 		expPass        bool
 		traceResponse  string
+		errContains    string
 	}{
 		{
 			msg: "default trace with contract call",
@@ -1623,8 +1631,50 @@ func (s *KeeperTestSuite) TestTraceCall() {
 					Tracer: "{data: [], fault: function(log) {}, step: function(log) { if(log.op.toString() == \"CALL\") this.data.push(log.stack.peek(0)); }, result: function() { return this.data; }}",
 				}
 			},
+			expPass:     false,
+			errContains: "custom JavaScript tracer code is not allowed",
+		},
+		{
+			msg: "muxTracer with native children",
+			getCallArgs: func() []byte {
+				return nil
+			},
+			getTraceConfig: func() *types.TraceConfig {
+				return &types.TraceConfig{
+					Tracer:           "muxTracer",
+					TracerJsonConfig: `{"callTracer": {}}`,
+				}
+			},
 			expPass:       true,
-			traceResponse: "[",
+			traceResponse: "\"callTracer\":",
+		},
+		{
+			msg: "muxTracer with javascript child",
+			getCallArgs: func() []byte {
+				return nil
+			},
+			getTraceConfig: func() *types.TraceConfig {
+				return &types.TraceConfig{
+					Tracer:           "muxTracer",
+					TracerJsonConfig: `{"callTracer": {}, "(function(){throw new Error('` + jsTracerEvaluatedMarker + `')})()": {}}`,
+				}
+			},
+			expPass:     false,
+			errContains: "custom JavaScript tracer code is not allowed",
+		},
+		{
+			msg: "nested muxTracer with javascript child",
+			getCallArgs: func() []byte {
+				return nil
+			},
+			getTraceConfig: func() *types.TraceConfig {
+				return &types.TraceConfig{
+					Tracer:           "muxTracer",
+					TracerJsonConfig: `{"muxTracer": {"(function(){throw new Error('` + jsTracerEvaluatedMarker + `')})()": {}}}`,
+				}
+			},
+			expPass:     false,
+			errContains: "custom JavaScript tracer code is not allowed",
 		},
 		{
 			msg: "trace simple value transfer",
@@ -1749,6 +1799,11 @@ func (s *KeeperTestSuite) TestTraceCall() {
 				}
 			} else {
 				s.Require().Error(err)
+				// A JavaScript tracer constructor must never be evaluated.
+				s.Require().NotContains(err.Error(), jsTracerEvaluatedMarker)
+				if tc.errContains != "" {
+					s.Require().Contains(err.Error(), tc.errContains)
+				}
 			}
 		})
 	}
@@ -1853,6 +1908,7 @@ func (s *KeeperTestSuite) TestQueryBaseFee() {
 				chainConfig.ShanghaiTime = &maxInt
 				chainConfig.CancunTime = &maxInt
 				chainConfig.PragueTime = &maxInt
+				chainConfig.OsakaTime = &maxInt
 
 				configurator := types.NewEVMConfigurator()
 				configurator.ResetTestConfig()
@@ -2030,6 +2086,33 @@ func (s *KeeperTestSuite) TestEthCall() {
 			s.Require().NoError(err)
 		})
 	}
+}
+
+func (s *KeeperTestSuite) TestEthCallLogLimit() {
+	s.SetupTest()
+
+	sender := s.Keyring.GetAddr(0)
+	// creation code emitting five 1 MiB LOG0 records, then STOP:
+	// 5 x (PUSH3 0x100000, PUSH0, LOG0), STOP
+	var code hexutil.Bytes
+	for i := 0; i < 5; i++ {
+		code = append(code, 0x62, 0x10, 0x00, 0x00, 0x5f, 0xa0)
+	}
+	code = append(code, 0x00)
+
+	gas := hexutil.Uint64(50_000_000)
+	args, err := json.Marshal(&types.TransactionArgs{
+		From: &sender,
+		Data: &code,
+		Gas:  &gas,
+	})
+	s.Require().NoError(err)
+
+	res, err := s.Network.GetEvmClient().EthCall(s.Network.GetContext(), &types.EthCallRequest{Args: args, GasCap: uint64(gas)})
+	s.Require().NoError(err)
+	s.Require().Contains(res.VmError, "max log data size per transaction")
+	s.Require().Empty(res.Logs)
+	s.Require().Equal(uint64(gas), res.GasUsed)
 }
 
 func (s *KeeperTestSuite) TestBalance() {

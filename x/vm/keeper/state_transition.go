@@ -465,7 +465,12 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		// - reset sender's nonce to msg.Nonce() before calling evm.
 		// - increase sender's nonce by one no matter the result.
 		stateDB.SetNonce(sender.Address(), msg.Nonce, tracing.NonceChangeEoACall)
+		snapshot := stateDB.Snapshot()
 		ret, _, leftoverGas, vmErr = evm.Create(sender.Address(), msg.Data, leftoverGas, convertedValue)
+		if logErr := stateDB.LogLimitError(); logErr != nil {
+			stateDB.RevertToSnapshot(snapshot)
+			ret, leftoverGas, vmErr = nil, 0, logErr
+		}
 		stateDB.SetNonce(sender.Address(), msg.Nonce+1, tracing.NonceChangeContractCreator)
 	} else {
 		// Apply EIP-7702 authorizations.
@@ -486,7 +491,12 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		if addr, ok := ethtypes.ParseDelegation(stateDB.GetCode(*msg.To)); ok {
 			stateDB.AddAddressToAccessList(addr)
 		}
+		snapshot := stateDB.Snapshot()
 		ret, leftoverGas, vmErr = evm.Call(sender.Address(), *msg.To, msg.Data, leftoverGas, convertedValue)
+		if logErr := stateDB.LogLimitError(); logErr != nil {
+			stateDB.RevertToSnapshot(snapshot)
+			ret, leftoverGas, vmErr = nil, 0, logErr
+		}
 	}
 
 	refundQuotient := params.RefundQuotient
@@ -496,17 +506,19 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		refundQuotient = params.RefundQuotientEIP3529
 	}
 
-	if internal {
-		refundQuotient = 1 // full refund on internal calls
-	}
-
 	// calculate gas refund
 	if msg.GasLimit < leftoverGas {
 		return nil, errorsmod.Wrap(types.ErrGasOverflow, "apply message")
 	}
 	// refund gas
 	maxUsedGas := msg.GasLimit - leftoverGas
-	refund := GasToRefund(stateDB.GetRefund(), maxUsedGas, refundQuotient)
+	var refund uint64
+	if !internal {
+		// Internal calls are not charged for refunds.
+		// Refunds earned during internal calls remain in the StateDB and are applied
+		// once, EIP-3529-capped, at the end of the outer transaction.
+		refund = GasToRefund(stateDB.GetRefund(), maxUsedGas, refundQuotient)
+	}
 
 	// update leftoverGas and temporaryGasUsed with refund amount
 	leftoverGas += refund
@@ -524,10 +536,25 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 		// Instead, we want to flush to the cacheCtx.
 		if callFromPrecompile {
 			if err := stateDB.FlushToCacheCtx(); err != nil {
+				// The EVM work has already been performed, so the measured gas
+				// must be charged even though the flush failed. Otherwise, a
+				// post-execution error would silently drop all the gas
+				// consumed by the EVM call from the outer Cosmos gas meter.
+				//
+				// Charge the full amount of gas used (maxUsedGas), without the
+				// refund, because gas refunds are only earned when the state
+				// changes actually commit. Charging the refunded amount
+				// (temporaryGasUsed) instead would let a caller inflate
+				// stateDB refunds (fully refundable on internal calls) and
+				// repeat cheaply, since the failing commit discards the very
+				// state changes that earned the refund.
+				ctx.GasMeter().ConsumeGas(maxUsedGas, "apply evm message")
 				return nil, errorsmod.Wrap(err, "failed to flush stateDB to cacheCtx")
 			}
 		} else {
 			if err := stateDB.Commit(); err != nil {
+				// See the comment on the FlushToCacheCtx error branch above.
+				ctx.GasMeter().ConsumeGas(maxUsedGas, "apply evm message")
 				return nil, errorsmod.Wrap(err, "failed to commit stateDB")
 			}
 		}

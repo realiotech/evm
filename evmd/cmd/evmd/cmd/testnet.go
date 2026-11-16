@@ -654,6 +654,9 @@ func collectGenFiles(
 		if err := genutil.ExportGenesisFileWithTime(genFile, chainID, nil, appState, genTime); err != nil {
 			return err
 		}
+		if err := setDefaultBlockMaxGas(genFile); err != nil {
+			return err
+		}
 	}
 
 	return nil

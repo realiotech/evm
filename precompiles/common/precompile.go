@@ -76,6 +76,9 @@ func (p Precompile) runNativeAction(evm *vm.EVM, contract *vm.Contract, action N
 	// add precompileCall entry on the stateDB journal
 	// this allows to revert the changes within an evm tx
 	if err := stateDB.AddPrecompileFn(snapshot); err != nil {
+		// the rejected call has no journal entry to revert this snapshot later,
+		// so drop it now to avoid leaking a cache layer until the tx commits
+		stateDB.RevertMultiStore(snapshot)
 		return nil, err
 	}
 

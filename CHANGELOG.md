@@ -11,6 +11,28 @@
 ### FEATURES
 
 ### BUG FIXES
+- [GHSA-2999-w3cc-ccf6](https://github.com/cosmos/evm/security/advisories/GHSA-2999-w3cc-ccf6) Disable caller-supplied JavaScript tracer code in trace queries by default, including for `muxTracer` children. Operators can re-enable it with the new `json-rpc.enable-custom-js-tracers` app config option. The trace timeout is now parsed, and required to be positive, before any tracer is constructed.
+
+- [GHSA-7cxm-ggr3-5j9j](https://github.com/cosmos/evm/security/advisories/GHSA-7cxm-ggr3-5j9j) (state-breaking) Enable the Osaka hardfork in the default EVM chain config, and update evmd to use Ethereum mainnet's default block gas limit (60M) instead of CometBFT's unlimited `-1`. Cap the logs an EVM message can retain at 65,536 entries and 4 MiB of log data; a message that exceeds either limit fails, its state changes are reverted and its full gas limit is consumed.
+- [GHSA-gmmv-9r53-wg5g](https://github.com/cosmos/evm/security/advisories/GHSA-gmmv-9r53-wg5g) Cap the `eth_feeHistory` `rewardPercentiles` count at 100 and reject duplicate percentiles, restoring the upstream `maxQueryLimit` guard so a single JSON-RPC request can no longer allocate a multi-gigabyte reward matrix.
+- [GHSA-wgpp-mgq4-63f9](https://github.com/cosmos/evm/security/advisories/GHSA-wgpp-mgq4-63f9) Revert the multistore snapshot when a precompile call is rejected by the per-transaction call limit, so rejected calls no longer leak cache layers that are only written at commit time and delay block production.
+- [GHSA-pqc8-5qh6-qxjg](https://github.com/cosmos/evm/security/advisories/GHSA-pqc8-5qh6-qxjg) Stop applying the StateDB gas refund counter to internal EVM calls (e.g. from precompiles, the ERC20 module, or other native modules).
+
+## v0.6.5
+
+### BUG FIXES
+- [\#1107](https://github.com/cosmos/evm/pull/1107) Skip StateDB commit error transactions during receipt conversion and indexing to prevent `invalid message index` errors in block RPCs. Blocks indexed before this release that contain such a transaction keep their old entries until the EVM indexer is rebuilt.
+
+- [GHSA-rr88-2jvc-fqwm](https://github.com/cosmos/evm/security/advisories/GHSA-rr88-2jvc-fqwm) (state-breaking) Reject a `MsgEthereumTx` in its msg handler unless the EVM ante handler verified it for the same sender in the same tx, so it can no longer be executed through paths that bypass the ante handlers (interchain accounts, governance proposals, authz, or any other module that dispatches msgs). Chains with a custom EVM ante handler must call `SetAnteVerifiedSender`, see the [v0.6.6 migration guide](docs/migrations/v0.6.5_to_v0.6.6.md). Also add `DenyListMsgRouter`, a message router that returns no handler for a list of denied msg types, for chains whose ante handler enforces rules on other msg types that must not be dispatched by another module. It is not needed for `MsgEthereumTx` and evmd does not use it.
+
+## v0.6.4
+
+### BUG FIXES
+- [GHSA-p8x8-4gg6-prcc](https://github.com/cosmos/evm/security/advisories/GHSA-p8x8-4gg6-prcc) Cap an internal EVM call's gas limit at the gas remaining on the transaction's gas meter, and charge the EVM gas it used to the Cosmos gas meter when the post-execution `StateDB` commit or flush fails.
+- [GHSA-7xxp-gq2c-x47x](https://github.com/cosmos/evm/security/advisories/GHSA-7xxp-gq2c-x47x) Reject EIP-712 signed transactions that set `timeout_timestamp`, `unordered`, a fee granter, or a fee payer, since these fields are excluded from the EIP-712 typed data and are not covered by the signature.
+- [GHSA-c6xv-pppp-rjw6](https://github.com/cosmos/evm/security/advisories/GHSA-c6xv-pppp-rjw6) Refuse to self-destruct a contract that still has delegations, redelegations or unbonding delegations.
+- [GHSA-wm4f-qpxp-rch4](https://github.com/cosmos/evm/security/advisories/GHSA-wm4f-qpxp-rch4) Check the precompile call limit before incrementing the counter and widen it to `uint64`, so rejected calls can no longer wrap it and reopen call slots. Reverted precompile calls still count against the limit.
+- [\#1277](https://github.com/cosmos/evm/pull/1277) Reject invalid addresses in `tx evm send` instead of silently building a `MsgSend` to a mangled recipient, and pass bech32 recipients through unchanged.
 
 ## v0.6.2
 
@@ -26,7 +48,8 @@
 - [\#1238](https://github.com/cosmos/evm/pull/1238) Validate ICS-20 acknowledgement encoding in the erc20 IBC v2 middleware.
 
 ### BUG FIXES
-- Align precompile gas calculation with expected EVM gas semantics.
+- [\#1223](https://github.com/cosmos/evm/pull/1223) Reject EVM txs below the base fee at mempool insert instead of silently queuing them.
+- [\#1050](https://github.com/cosmos/evm/pull/1050) Align precompile gas calculation with expected EVM gas semantics.
 
 ## v0.6.0
 

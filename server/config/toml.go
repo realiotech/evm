@@ -129,6 +129,11 @@ batch-response-max-size = {{ .JSONRPC.BatchResponseMaxSize }}
 # Enabled profiling in the debug namespace
 enable-profiling = {{ .JSONRPC.EnableProfiling }}
 
+# Allow trace queries to evaluate custom JavaScript tracer code. The tracer constructor runs before the
+# trace timeout applies and cannot be interrupted, so this SHOULD NOT be enabled on nodes that serve
+# untrusted trace requests.
+enable-custom-js-tracers = {{ .JSONRPC.EnableCustomJSTracers }}
+
 ###############################################################################
 ###                             TLS Configuration                           ###
 ###############################################################################

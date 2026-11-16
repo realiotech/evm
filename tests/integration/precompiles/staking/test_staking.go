@@ -14,6 +14,7 @@ import (
 	"github.com/cosmos/evm/precompiles/testutil"
 	chainutil "github.com/cosmos/evm/testutil"
 	testconstants "github.com/cosmos/evm/testutil/constants"
+	"github.com/cosmos/evm/testutil/integration/evm/utils"
 	"github.com/cosmos/evm/testutil/keyring"
 	"github.com/cosmos/evm/x/vm/statedb"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -786,7 +787,7 @@ func (s *PrecompileTestSuite) TestCMS() {
 			signedMsg, err := s.factory.SignMsgEthereumTx(s.keyring.GetPrivKey(0), msgEthereumTx)
 			s.Require().NoError(err, "failed to sign Ethereum message")
 
-			resp, err := s.network.App.GetEVMKeeper().EthereumTx(ctx, &signedMsg)
+			resp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.network.App.GetEVMKeeper(), &signedMsg)
 
 			// Check results
 			if tc.expPass {

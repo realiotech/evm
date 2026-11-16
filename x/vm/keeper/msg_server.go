@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 )
 
@@ -31,6 +33,10 @@ func (k *Keeper) EthereumTx(goCtx context.Context, msg *types.MsgEthereumTx) (*t
 
 	tx := msg.AsTransaction()
 	txIndex := k.GetTxIndexTransient(ctx)
+
+	if err := k.requireAnteVerifiedSender(ctx, msg); err != nil {
+		return nil, err
+	}
 
 	labels := []metrics.Label{
 		telemetry.NewLabel("tx_type", fmt.Sprintf("%d", tx.Type())),
@@ -113,6 +119,33 @@ func (k *Keeper) EthereumTx(goCtx context.Context, msg *types.MsgEthereumTx) (*t
 	})
 
 	return response, nil
+}
+
+// requireAnteVerifiedSender returns an error unless the EVM ante handler
+// verified and charged the given message for its From address.
+func (k *Keeper) requireAnteVerifiedSender(ctx sdk.Context, ethereumTxMsg *types.MsgEthereumTx) error {
+	// Signature, nonce and fee are only checked by the EVM ante handler, which
+	// does not run for messages dispatched by another message (authz, gov,
+	// interchain accounts, ...). Those arrive here without a record.
+	verifiedSender, wasAnteVerified := k.ConsumeAnteVerifiedSender(ctx, ethereumTxMsg.Hash())
+	if !wasAnteVerified {
+		return errorsmod.Wrap(
+			errortypes.ErrUnauthorized,
+			"MsgEthereumTx is only executable as the single message of an Ethereum tx and cannot be dispatched by another message",
+		)
+	}
+
+	// The tx hash does not cover From, so the record alone does not vouch for
+	// the From address other modules use as the signer of this message.
+	if !bytes.Equal(ethereumTxMsg.From, verifiedSender.Bytes()) {
+		return errorsmod.Wrapf(
+			errortypes.ErrorInvalidSigner,
+			"sender 0x%x is not the sender %s verified by the ante handler",
+			ethereumTxMsg.From, verifiedSender.Hex(),
+		)
+	}
+
+	return nil
 }
 
 // UpdateParams implements the gRPC MsgServer interface. When an UpdateParams
