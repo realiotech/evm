@@ -696,6 +696,13 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 					Expect(out.TallyResult.Abstain).To(Equal("0"))
 					Expect(out.TallyResult.No).To(Equal("0"))
 					Expect(out.TallyResult.NoWithVeto).To(Equal("0"))
+
+					// The signed tally query must not delete the proposal's
+					// stored votes once its block is committed.
+					Expect(s.network.NextBlock()).To(BeNil())
+					votesRes, err := s.network.GetGovClient().Votes(s.network.GetContext(), &govv1.QueryVotesRequest{ProposalId: proposalID})
+					Expect(err).To(BeNil())
+					Expect(votesRes.Votes).To(HaveLen(1))
 				})
 			})
 
