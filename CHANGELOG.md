@@ -19,6 +19,7 @@
 - [GHSA-wgpp-mgq4-63f9](https://github.com/cosmos/evm/security/advisories/GHSA-wgpp-mgq4-63f9) Revert the multistore snapshot when a precompile call is rejected by the per-transaction call limit, so rejected calls no longer leak cache layers that are only written at commit time and delay block production.
 - [GHSA-pqc8-5qh6-qxjg](https://github.com/cosmos/evm/security/advisories/GHSA-pqc8-5qh6-qxjg) Stop applying the StateDB gas refund counter to internal EVM calls (e.g. from precompiles, the ERC20 module, or other native modules).
 - [GHSA-wprr-wxv3-pj87](https://github.com/cosmos/evm/security/advisories/GHSA-wprr-wxv3-pj87) Cap `eth_getProof` at 1024 storage keys and honor request cancellation between storage proof queries, preventing unauthenticated memory-exhaustion of the node.
+- [GHSA-9mxw-68w9-5fxv](https://github.com/cosmos/evm/security/advisories/GHSA-9mxw-68w9-5fxv) (state-breaking) Reject EIP-712 payloads containing more than 32 messages before conversion, since the superlinear cost of converting large payloads lets a single default-size transaction burn minutes of CPU in signature verification.
 
 ## v0.6.5
 
