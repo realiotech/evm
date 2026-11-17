@@ -11,6 +11,7 @@
 ### FEATURES
 
 ### BUG FIXES
+- [GHSA-6h3f-9jpj-8v6j](https://github.com/cosmos/evm/security/advisories/GHSA-6h3f-9jpj-8v6j) (state-breaking) Fix IBC receive callback post-execution balance check to only require the current packet's amount to be consumed, preventing a one-unit pre-fund of the derived receiver from persistently denying later callbacks.
 - [GHSA-2999-w3cc-ccf6](https://github.com/cosmos/evm/security/advisories/GHSA-2999-w3cc-ccf6) Disable caller-supplied JavaScript tracer code in trace queries by default, including for `muxTracer` children. Operators can re-enable it with the new `json-rpc.enable-custom-js-tracers` app config option. The trace timeout is now parsed, and required to be positive, before any tracer is constructed.
 
 - [GHSA-7cxm-ggr3-5j9j](https://github.com/cosmos/evm/security/advisories/GHSA-7cxm-ggr3-5j9j) (state-breaking) Enable the Osaka hardfork in the default EVM chain config, and update evmd to use Ethereum mainnet's default block gas limit (60M) instead of CometBFT's unlimited `-1`. Cap the logs an EVM message can retain at 65,536 entries and 4 MiB of log data; a message that exceeds either limit fails, its state changes are reverted and its full gas limit is consumed.

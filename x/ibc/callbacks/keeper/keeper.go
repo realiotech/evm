@@ -186,6 +186,13 @@ func (k ContractKeeper) IBCReceivePacketCallback(
 
 	erc20 := contracts.ERC20MinterBurnerDecimalsContract
 
+	// Snapshot the receiver's balance of the packet token before the callback runs.
+	// The incoming packet amount has already been credited to the receiver at this
+	// point, so this is the pre-existing balance plus the packet amount. It is used
+	// below to require the callback to consume at least the packet amount.
+	// NOTE: use the original ctx for the balance read, it is a state read only.
+	entryBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex)
+
 	remainingGas := math.NewIntFromUint64(cachedCtx.GasMeter().GasRemaining()).BigInt()
 
 	// Call the EVM with the remaining gas as the maximum gas limit.
@@ -228,16 +235,27 @@ func (k ContractKeeper) IBCReceivePacketCallback(
 	// Write cachedCtx events back to ctx.
 	writeFn()
 
-	// Check that the sender no longer has tokens after the callback.
+	// Check that the receiver no longer holds the tokens transferred by this packet
+	// after the callback.
 	// NOTE: contracts must implement an IERC20(token).transferFrom(msg.sender, address(this), amount)
 	// for the total amount, or the callback will fail.
 	// This check is here to prevent funds from getting stuck in the isolated address,
 	// since they would become irretrievable.
-	receiverTokenBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex) // here,
-	// we can use the original ctx and skip manually adding the gas
-	if receiverTokenBalance.Cmp(big.NewInt(0)) != 0 {
+	//
+	// The receiver address is derived only from the destination channel and the raw
+	// source sender, so it is reused by later packets with the same inputs. Anyone
+	// can pre-fund the receiver with the packet's token, so the balance is compared
+	// against the pre-callback snapshot minus the packet amount instead of against
+	// zero: only the current packet's funds are required to be consumed, and any
+	// pre-existing balance may remain without persistently failing later callbacks
+	// on the same route.
+	// NOTE: we can use the original ctx and skip manually adding the gas
+	receiverTokenBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex)
+	expectedBalance := new(big.Int).Sub(entryBalance, amountInt.BigInt())
+	if receiverTokenBalance.Cmp(expectedBalance) > 0 {
 		return errorsmod.Wrapf(erc20types.ErrEVMCall,
-			"receiver has %d unrecoverable tokens after callback", receiverTokenBalance)
+			"receiver has %d unrecoverable tokens after callback",
+			new(big.Int).Sub(receiverTokenBalance, expectedBalance))
 	}
 
 	return nil

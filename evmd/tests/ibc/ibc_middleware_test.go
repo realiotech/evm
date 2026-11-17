@@ -163,8 +163,32 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 		malleate func()
 		memo     func() string
 		expError string
+		// preFund pre-funds the isolated receiver with one base unit of the voucher
+		// denom before the packet is received.
+		preFund bool
 	}{
 		// SUCCESS CASES
+		{
+			name:     "success - pre-funded receiver, callback consumes exactly the packet amount",
+			malleate: nil,
+			memo: func() string {
+				amountInt, _ := math.NewIntFromString(ibctesting.DefaultCoinAmount.String())
+				voucherDenom := testutil.GetVoucherDenomFromPacketData(data, path.EndpointA.ChannelConfig.PortID, path.EndpointA.ChannelID)
+				singleTokenRepresentation, _ := types.NewTokenPairSTRv2(voucherDenom)
+				erc20Contract := singleTokenRepresentation.GetERC20Contract()
+				packedBytes, _ := contractData.ABI.Pack("add", erc20Contract, amountInt.BigInt())
+
+				return fmt.Sprintf(`{
+					"dest_callback": {
+						"address": "%s",
+						"gas_limit": "%d",
+						"calldata": "%x"
+					}
+				}`, contractAddr, 1_000_000, packedBytes)
+			},
+			expError: "",
+			preFund:  true,
+		},
 		{
 			name:     "success - callback to add function with valid parameters",
 			malleate: nil,
@@ -323,6 +347,27 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 			},
 			expError: "ABCI code: 8",
 		},
+		{
+			name:     "failure - pre-funded receiver, callback consumes only part of the packet amount",
+			malleate: nil,
+			memo: func() string {
+				amountInt, _ := math.NewIntFromString(ibctesting.DefaultCoinAmount.String())
+				voucherDenom := testutil.GetVoucherDenomFromPacketData(data, path.EndpointA.ChannelConfig.PortID, path.EndpointA.ChannelID)
+				singleTokenRepresentation, _ := types.NewTokenPairSTRv2(voucherDenom)
+				erc20Contract := singleTokenRepresentation.GetERC20Contract()
+				packedBytes, _ := contractData.ABI.Pack("add", erc20Contract, amountInt.SubRaw(1).BigInt())
+
+				return fmt.Sprintf(`{
+					"dest_callback": {
+						"address": "%s",
+						"gas_limit": "%d",
+						"calldata": "%x"
+					}
+				}`, contractAddr, 1_000_000, packedBytes)
+			},
+			expError: "ABCI code: 12",
+			preFund:  true,
+		},
 
 		// FAILURE CASES - Gas Issues
 		{
@@ -432,6 +477,17 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 				tc.malleate()
 			}
 
+			evmApp := suite.evmChainA.App.(*evmd.EVMD)
+			preFundAmt := math.ZeroInt()
+			if tc.preFund {
+				// Pre-fund the isolated receiver with one base unit of the voucher denom.
+				preFundAmt = math.OneInt()
+				preFundCoins := sdk.NewCoins(sdk.NewCoin(voucherDenom, preFundAmt))
+				ctxA := suite.evmChainA.GetContext()
+				suite.Require().NoError(evmApp.GetBankKeeper().MintCoins(ctxA, "mint", preFundCoins))
+				suite.Require().NoError(evmApp.GetBankKeeper().SendCoinsFromModuleToAccount(ctxA, "mint", isolatedAddr, preFundCoins))
+			}
+
 			packet = channeltypes.Packet{
 				Sequence:           1,
 				SourcePort:         path.EndpointB.ChannelConfig.PortID,
@@ -459,7 +515,6 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 			)
 
 			// Validate successful callback
-			evmApp := suite.evmChainA.App.(*evmd.EVMD)
 			singleTokenRepresentation, err := types.NewTokenPairSTRv2(voucherDenom)
 			suite.Require().NoError(err)
 			erc20Contract := singleTokenRepresentation.GetERC20Contract()
@@ -477,6 +532,28 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 
 				available := evmApp.Erc20Keeper.IsDynamicPrecompileAvailable(evmCtx, common.HexToAddress(tokenPair.Erc20Address))
 				suite.Require().True(available)
+
+				if tc.preFund {
+					// The pre-existing balance is preserved and does not block the callback.
+					receiverBal := evmApp.GetBankKeeper().GetBalance(suite.evmChainA.GetContext(), isolatedAddr, voucherDenom)
+					suite.Require().Equal(preFundAmt.String(), receiverBal.Amount.String())
+
+					// A later packet on the same route (fresh sequence) must also succeed.
+					packet.Sequence = 2
+					ack = transferStack.OnRecvPacket(
+						suite.evmChainA.GetContext(),
+						sourceChan.Version,
+						packet,
+						suite.evmChainA.SenderAccount.GetAddress(),
+					)
+					suite.Require().True(ack.Success(), "Expected success on repeated packet but got failure")
+
+					balAfterCallback = evmApp.Erc20Keeper.BalanceOf(suite.evmChainA.GetContext(), contracts.ERC20MinterBurnerDecimalsContract.ABI, erc20Contract, contractAddr)
+					suite.Require().Equal(sendAmt.MulRaw(2).String(), balAfterCallback.String())
+
+					receiverBal = evmApp.GetBankKeeper().GetBalance(suite.evmChainA.GetContext(), isolatedAddr, voucherDenom)
+					suite.Require().Equal(preFundAmt.String(), receiverBal.Amount.String())
+				}
 			} else {
 				suite.Require().False(ack.Success(), "Expected failure but got success")
 
@@ -488,6 +565,13 @@ func (suite *MiddlewareTestSuite) TestOnRecvPacketWithCallback() {
 				ackErr, ok := ackObj.Response.(*channeltypes.Acknowledgement_Error)
 				suite.Require().True(ok)
 				suite.Require().Contains(ackErr.Error, tc.expError)
+
+				if tc.preFund {
+					// The callback's partial transfer is reverted. The packet credit itself is
+					// only reverted by core IBC on the error ack, which is bypassed here.
+					receiverBal := evmApp.GetBankKeeper().GetBalance(suite.evmChainA.GetContext(), isolatedAddr, voucherDenom)
+					suite.Require().Equal(preFundAmt.Add(sendAmt).String(), receiverBal.Amount.String())
+				}
 			}
 		})
 	}
