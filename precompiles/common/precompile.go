@@ -172,6 +172,12 @@ func SetupABI(
 	// if the method type is `function` continue looking for arguments
 	if method.Type == abi.Function {
 		argsBz := contract.Input[4:]
+		// reject inputs whose decoded representation would expand beyond the
+		// encoded size (e.g. repeated offsets aliasing one dynamic tail) before
+		// the decoder materializes it
+		if err := CheckABIInputSize(method.Inputs, argsBz); err != nil {
+			return nil, nil, err
+		}
 		args, err = method.Inputs.Unpack(argsBz)
 		if err != nil {
 			return nil, nil, err
