@@ -12,10 +12,13 @@ import (
 	ethparams "github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 
+	"github.com/cosmos/evm/precompiles/bech32"
 	testconstants "github.com/cosmos/evm/testutil/constants"
 	"github.com/cosmos/evm/testutil/integration/evm/network"
 	testkeyring "github.com/cosmos/evm/testutil/keyring"
 	utiltx "github.com/cosmos/evm/testutil/tx"
+	testutiltypes "github.com/cosmos/evm/testutil/types"
+	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	"github.com/cosmos/evm/x/vm/statedb"
 	"github.com/cosmos/evm/x/vm/types"
 
@@ -1167,6 +1170,28 @@ func (s *KeeperTestSuite) TestSetBalanceRejectsModuleAccounts() {
 			},
 		},
 		{
+			name: "unmaterialised module address, nonzero amount (reserved by name only)",
+			prepare: func() setup {
+				modEth := common.BytesToAddress(authtypes.NewModuleAddress(feemarkettypes.ModuleName).Bytes())
+				return setup{
+					addr:    modEth,
+					current: s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), modEth),
+				}
+			},
+			amountFn: func(_ *uint256.Int) *uint256.Int { return uint256.NewInt(1) },
+		},
+		{
+			name: "unmaterialised module address, equal amount (reserved by name only)",
+			prepare: func() setup {
+				modEth := common.BytesToAddress(authtypes.NewModuleAddress(feemarkettypes.ModuleName).Bytes())
+				return setup{
+					addr:    modEth,
+					current: s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), modEth),
+				}
+			},
+			amountFn: func(cur *uint256.Int) *uint256.Int { return new(uint256.Int).Set(cur) },
+		},
+		{
 			name: "bonded_tokens_pool, equal (isModule arm, isBlockedChange skipped)",
 			prepare: func() setup {
 				modEth := common.BytesToAddress(authtypes.NewModuleAddress(stakingtypes.BondedPoolName).Bytes())
@@ -1193,6 +1218,56 @@ func (s *KeeperTestSuite) TestSetBalanceRejectsModuleAccounts() {
 			s.Require().Equal(st.current, after)
 		})
 	}
+}
+
+func (s *KeeperTestSuite) TestSetAccountRejectsUnmaterialisedModuleAddress() {
+	s.SetupTest()
+	ctx := s.Network.GetContext()
+	cosmosAddr := authtypes.NewModuleAddress(feemarkettypes.ModuleName)
+	modEth := common.BytesToAddress(cosmosAddr.Bytes())
+
+	// the module address is reserved in the permission table but has never
+	// been materialised in x/auth
+	s.Require().Nil(s.Network.App.GetAccountKeeper().GetAccount(ctx, cosmosAddr))
+	s.Require().True(s.Network.App.GetBankKeeper().BlockedAddr(cosmosAddr))
+
+	err := s.Network.App.GetEVMKeeper().SetAccount(ctx, modEth, statedb.Account{
+		Nonce:    1,
+		Balance:  uint256.NewInt(0),
+		CodeHash: types.EmptyCodeHash,
+	})
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "is not allowed to receive funds")
+
+	// the reserved address must not have been squatted by a BaseAccount
+	s.Require().Nil(s.Network.App.GetAccountKeeper().GetAccount(ctx, cosmosAddr))
+}
+
+func (s *KeeperTestSuite) TestCallPrecompileWithoutAccount() {
+	s.SetupTest()
+	addr := common.HexToAddress(types.Bech32PrecompileAddress)
+	cosmosAddr := sdk.AccAddress(addr.Bytes())
+
+	// the precompile address is blocked in x/bank but has no account in x/auth
+	// yet
+	s.Require().Nil(s.Network.App.GetAccountKeeper().GetAccount(s.Network.GetContext(), cosmosAddr))
+	s.Require().True(s.Network.App.GetBankKeeper().BlockedAddr(cosmosAddr))
+
+	// a real transaction to the precompile must succeed and leave an account behind
+	res, err := s.Factory.ExecuteContractCall(
+		s.Keyring.GetPrivKey(0),
+		types.EvmTxArgs{To: &addr},
+		testutiltypes.CallArgs{
+			ContractABI: bech32.ABI,
+			MethodName:  bech32.HexToBech32Method,
+			Args:        []interface{}{s.Keyring.GetAddr(0), testconstants.ExampleBech32Prefix},
+		},
+	)
+	s.Require().NoError(err)
+	s.Require().True(res.IsOK(), res.Log)
+
+	s.Require().NoError(s.Network.NextBlock())
+	s.Require().NotNil(s.Network.App.GetAccountKeeper().GetAccount(s.Network.GetContext(), cosmosAddr))
 }
 
 func (s *KeeperTestSuite) TestSetBalanceAllowsEOA() {

@@ -41,6 +41,8 @@
 - [GHSA-wm4f-qpxp-rch4](https://github.com/cosmos/evm/security/advisories/GHSA-wm4f-qpxp-rch4) Check the precompile call limit before incrementing the counter and widen it to `uint64`, so rejected calls can no longer wrap it and reopen call slots. Reverted precompile calls still count against the limit.
 - [\#1277](https://github.com/cosmos/evm/pull/1277) Reject invalid addresses in `tx evm send` instead of silently building a `MsgSend` to a mangled recipient, and pass bech32 recipients through unchanged.
 
+- [GHSA-m8j9-7x4m-73vw](https://github.com/cosmos/evm/security/advisories/GHSA-m8j9-7x4m-73vw) (state-breaking) Refuse EVM account and balance writes to any module account address regardless of amount, and check the reservation before persisting the account, so a reserved-but-never-materialised module address cannot be squatted by a plain `BaseAccount`.
+
 ## v0.6.2
 
 ### IMPROVEMENTS

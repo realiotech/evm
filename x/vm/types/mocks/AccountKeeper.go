@@ -80,6 +80,26 @@ func (_m *AccountKeeper) GetModuleAddress(moduleName string) cosmos_sdktypes.Acc
 	return r0
 }
 
+// GetModulePermissions provides a mock function with no fields
+func (_m *AccountKeeper) GetModulePermissions() map[string]authtypes.PermissionsForAddress {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetModulePermissions")
+	}
+
+	var r0 map[string]authtypes.PermissionsForAddress
+	if rf, ok := ret.Get(0).(func() map[string]authtypes.PermissionsForAddress); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]authtypes.PermissionsForAddress)
+		}
+	}
+
+	return r0
+}
+
 // GetParams provides a mock function with given fields: ctx
 func (_m *AccountKeeper) GetParams(ctx context.Context) authtypes.Params {
 	ret := _m.Called(ctx)
