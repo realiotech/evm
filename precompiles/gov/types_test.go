@@ -3,6 +3,7 @@ package gov
 import (
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -11,7 +12,11 @@ import (
 	evmaddress "github.com/cosmos/evm/encoding/address"
 	cmn "github.com/cosmos/evm/precompiles/common"
 
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 func TestNewMsgDeposit(t *testing.T) {
@@ -401,4 +406,83 @@ func TestParseDepositArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewMsgSubmitProposalRequiresCanonicalMessageJSON(t *testing.T) {
+	addrCodec := evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32AccountAddrPrefix())
+	registry := codectypes.NewInterfaceRegistry()
+	authz.RegisterInterfaces(registry)
+	stakingtypes.RegisterInterfaces(registry)
+	cdc := codec.NewProtoCodec(registry)
+
+	proposerAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	deposit := []cmn.Coin{{Denom: "stake", Amount: big.NewInt(1000)}}
+
+	grant := func(authorization, expiration string) string {
+		return `{"@type":"/cosmos.authz.v1beta1.MsgGrant",` +
+			`"granter":"cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn",` +
+			`"grantee":"cosmos1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zwqjy6c",` +
+			`"grant":{"authorization":{"@type":"/cosmos.staking.v1beta1.StakeAuthorization",` + authorization + `},` +
+			`"expiration":"` + expiration + `"}}`
+	}
+	exec := func(msg string) string {
+		return `{"@type":"/cosmos.authz.v1beta1.MsgExec","grantee":"cosmos10d07y265gmmuvt4z0w9aw880jnsr700j6zn9kn","msgs":[` + msg + `]}`
+	}
+
+	const (
+		allowList  = `"allow_list":{"address":["cosmosvaloper1xvenxvenxvenxvenxvenxvenxvenxvene23vre"]}`
+		denyList   = `"deny_list":{"address":["cosmosvaloper1g3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyx9en9h"]}`
+		delegate   = `"authorization_type":"AUTHORIZATION_TYPE_DELEGATE"`
+		expiration = "2030-01-01T00:00:00Z"
+	)
+	canonicalGrant := grant(`"max_tokens":null,`+allowList+`,`+delegate, expiration)
+
+	for name, msg := range map[string]string{
+		"canonical grant":         canonicalGrant,
+		"canonical grant in exec": exec(canonicalGrant),
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, _, err := NewMsgSubmitProposal(
+				[]interface{}{proposerAddr, proposalJSON(msg), deposit},
+				cdc, addrCodec,
+			)
+			require.NoError(t, err)
+			require.Len(t, res.Messages, 1)
+		})
+	}
+
+	ambiguousGrant := grant(`"max_tokens":null,`+allowList+`,`+denyList+`,`+delegate, expiration)
+	for name, msg := range map[string]string{
+		"both oneof members":         ambiguousGrant,
+		"both oneof members in exec": exec(ambiguousGrant),
+		"camelCase oneof member": grant(
+			`"max_tokens":null,"allowList":{"address":["cosmosvaloper1xvenxvenxvenxvenxvenxvenxvenxvene23vre"]},`+denyList+`,`+delegate,
+			expiration,
+		),
+		"null oneof member":  grant(`"max_tokens":null,"allow_list":null,`+denyList+`,`+delegate, expiration),
+		"numeric enum":       grant(`"max_tokens":null,`+allowList+`,"authorization_type":1`, expiration),
+		"non-UTC timestamp":  grant(`"max_tokens":null,`+allowList+`,`+delegate, "2030-01-01T01:00:00+01:00"),
+		"omitted default":    grant(allowList+`,`+delegate, expiration),
+		"extra whitespace":   strings.Replace(canonicalGrant, `,`, `, `, 1),
+		"undecodable member": grant(`"max_tokens":null,"allow_list":{"unknown_allow":1},"deny_list":{"unknown_deny":1},`+delegate, expiration),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// gogoproto's choice among several set oneof members varies between
+			// runs; the result must not.
+			for i := 0; i < 256; i++ {
+				_, _, err := NewMsgSubmitProposal(
+					[]interface{}{proposerAddr, proposalJSON(msg), deposit},
+					cdc, addrCodec,
+				)
+				require.ErrorIs(t, err, errInvalidProposalMessage)
+				require.Equal(t, "message 0: "+errInvalidProposalMessage.Error(), err.Error())
+			}
+		})
+	}
+}
+
+func proposalJSON(msg string) []byte {
+	return []byte(fmt.Sprintf(
+		`{"title":"t","summary":"s","metadata":"","expedited":false,"messages":[%s]}`, msg,
+	))
 }

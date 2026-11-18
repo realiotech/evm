@@ -11,6 +11,7 @@
 ### FEATURES
 
 ### BUG FIXES
+- [GHSA-r4w8-cwq3-38v3](https://github.com/cosmos/evm/security/advisories/GHSA-r4w8-cwq3-38v3) (state-breaking) Require gov precompile `submitProposal` messages to be in the codec's canonical JSON form, rejecting messages that set more than one member of a protobuf oneof and could be decoded differently across validators.
 - [GHSA-jm8v-28c7-5pf6](https://github.com/cosmos/evm/security/advisories/GHSA-jm8v-28c7-5pf6) (state-breaking) Revert the EVM state to an explicit snapshot after running the governance precompile's `getTallyResult` query so the SDK tally, which deletes the votes of active proposals, can no longer erase live governance votes when invoked through a signed EVM transaction.
 - [GHSA-6h3f-9jpj-8v6j](https://github.com/cosmos/evm/security/advisories/GHSA-6h3f-9jpj-8v6j) (state-breaking) Fix IBC receive callback post-execution balance check to only require the current packet's amount to be consumed, preventing a one-unit pre-fund of the derived receiver from persistently denying later callbacks.
 - [GHSA-2999-w3cc-ccf6](https://github.com/cosmos/evm/security/advisories/GHSA-2999-w3cc-ccf6) Disable caller-supplied JavaScript tracer code in trace queries by default, including for `muxTracer` children. Operators can re-enable it with the new `json-rpc.enable-custom-js-tracers` app config option. The trace timeout is now parsed, and required to be positive, before any tracer is constructed.

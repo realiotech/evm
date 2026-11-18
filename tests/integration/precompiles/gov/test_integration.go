@@ -2167,13 +2167,23 @@ func minimalDeposit(denom string, amount *big.Int) []cmn.Coin {
 // minimalBankSendProposalJSON returns a valid governance proposal encoded as UTF‑8 bytes.
 func minimalBankSendProposalJSON(to sdk.AccAddress, denom, amount string) []byte {
 	// proto‑JSON marshal via std JSON since test helpers don’t expose codec here.
-	// We craft by hand for brevity.
-	msgJSON, _ := json.Marshal(map[string]interface{}{
-		"@type": "/cosmos.bank.v1beta1.MsgSend",
+	// Messages must be in the codec's canonical form, so fields follow the
+	// proto declaration order.
+	type coin struct {
+		Denom  string `json:"denom"`
+		Amount string `json:"amount"`
+	}
+	msgJSON, _ := json.Marshal(struct {
+		Type        string `json:"@type"`
+		FromAddress string `json:"from_address"`
+		ToAddress   string `json:"to_address"`
+		Amount      []coin `json:"amount"`
+	}{
+		Type: "/cosmos.bank.v1beta1.MsgSend",
 		// from_address must be gov module account
-		"from_address": govModuleAddr.String(),
-		"to_address":   to.String(),
-		"amount":       []map[string]string{{"denom": denom, "amount": amount}},
+		FromAddress: govModuleAddr.String(),
+		ToAddress:   to.String(),
+		Amount:      []coin{{Denom: denom, Amount: amount}},
 	})
 
 	prop := map[string]interface{}{
