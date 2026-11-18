@@ -9,9 +9,13 @@ const (
 	Internal
 )
 
-// MaxPrecompileCalls is the maximum number of precompile
-// calls within a transaction. We want to limit this because
-// for each precompile tx we're creating a cached context
+// MaxPrecompileCalls is the maximum number of precompile calls
+// issued by a top-level StateDB and every StateDB nested in its
+// precompile calls. We want to limit this because for each
+// precompile tx we're creating a cached context. A StateDB built
+// from a context that carries no limit is top-level and starts
+// its own count, so a Cosmos transaction that builds several
+// top-level StateDBs gets a separate limit for each of them.
 const MaxPrecompileCalls uint64 = 20
 
 const (

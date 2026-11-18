@@ -11,6 +11,7 @@
 ### FEATURES
 
 ### BUG FIXES
+- [GHSA-qcm4-6mc8-8gwc](https://github.com/cosmos/evm/security/advisories/GHSA-qcm4-6mc8-8gwc) (state-breaking) Charge the SDK gas consumed by a stateful precompile's native action even when the action fails, so a reverting precompile call (for example an ICS20 transfer whose ERC20 conversion runs nested EVM calls) can no longer return its unused gas to the caller after doing unpaid work. Share the precompile call limit between a top-level StateDB and every StateDB nested in its precompile calls.
 - [GHSA-r4w8-cwq3-38v3](https://github.com/cosmos/evm/security/advisories/GHSA-r4w8-cwq3-38v3) (state-breaking) Require gov precompile `submitProposal` messages to be in the codec's canonical JSON form, rejecting messages that set more than one member of a protobuf oneof and could be decoded differently across validators.
 - [GHSA-jm8v-28c7-5pf6](https://github.com/cosmos/evm/security/advisories/GHSA-jm8v-28c7-5pf6) (state-breaking) Revert the EVM state to an explicit snapshot after running the governance precompile's `getTallyResult` query so the SDK tally, which deletes the votes of active proposals, can no longer erase live governance votes when invoked through a signed EVM transaction.
 - [GHSA-6h3f-9jpj-8v6j](https://github.com/cosmos/evm/security/advisories/GHSA-6h3f-9jpj-8v6j) (state-breaking) Fix IBC receive callback post-execution balance check to only require the current packet's amount to be consumed, preventing a one-unit pre-fund of the derived receiver from persistently denying later callbacks.
