@@ -103,6 +103,12 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		return ctx, err
 	}
 
+	// The tx bytes must be exactly the envelope the signed message determines, so
+	// no unsigned envelope data can take up block space.
+	if err := ValidateTxEncoding(ethMsg, ctx.TxBytes()); err != nil {
+		return ctx, err
+	}
+
 	// call go-ethereum transaction validation
 	header := ethtypes.Header{
 		GasLimit:   ethTx.Gas(),
@@ -282,7 +288,6 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	if err != nil {
 		return ctx, err
 	}
-
 	// The MsgEthereumTx handler only executes a tx recorded here, which is how
 	// it rejects messages that another message dispatched around this handler.
 	md.evmKeeper.SetAnteVerifiedSender(ctx, ethTx.Hash(), fromAddr)
