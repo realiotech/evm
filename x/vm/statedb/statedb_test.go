@@ -578,7 +578,7 @@ func (suite *StateDBTestSuite) TestAccessList() {
 				IsEIP2929:        true,
 				IsPrague:         true,
 			}
-			db.Prepare(rules, address, common.Address{}, &address2, vm.PrecompiledAddressesPrague, al)
+			db.Prepare(rules, address, common.Address{}, &address2, vm.PrecompiledAddressesOsaka, al)
 
 			// check sender and dst
 			suite.Require().True(db.AddressInAccessList(address))

@@ -324,6 +324,11 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 		hi = req.GasCap
 	}
 
+	// Cap the gas allowance at the EIP-7825 transaction gas limit.
+	if hi > ethparams.MaxTxGas && types.GetEthChainConfig().IsOsaka(big.NewInt(ctx.BlockHeight()), uint64(ctx.BlockTime().Unix())) { //nolint:gosec // G115: block time is non-negative
+		hi = ethparams.MaxTxGas
+	}
+
 	gasCap = hi
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress))
 	if err != nil {

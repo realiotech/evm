@@ -75,8 +75,7 @@ func DefaultStaticPrecompiles(
 	opts ...Option,
 ) map[common.Address]vm.PrecompiledContract {
 	precompiles := NewStaticPrecompiles().
-		WithPraguePrecompiles().
-		WithP256Precompile().
+		WithOsakaPrecompiles().
 		WithBech32Precompile().
 		WithStakingPrecompile(stakingKeeper, bankKeeper, opts...).
 		WithDistributionPrecompile(distributionKeeper, stakingKeeper, bankKeeper, opts...).

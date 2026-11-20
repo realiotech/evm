@@ -48,8 +48,8 @@ func (k *Keeper) GetStaticPrecompileInstance(params *types.Params, address commo
 
 // IsAvailablePrecompile returns true if the given static precompile address is contained in the
 // EVM keeper's available precompiles map.
-// This function assumes that the Berlin precompiles cannot be disabled.
+// This function assumes that the Osaka precompiles cannot be disabled.
 func (k Keeper) IsAvailableStaticPrecompile(params *types.Params, address common.Address) bool {
 	return slices.Contains(params.ActiveStaticPrecompiles, address.String()) ||
-		slices.Contains(vm.PrecompiledAddressesPrague, address)
+		slices.Contains(vm.PrecompiledAddressesOsaka, address)
 }

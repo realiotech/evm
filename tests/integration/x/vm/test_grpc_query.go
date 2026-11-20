@@ -678,6 +678,21 @@ func (s *KeeperTestSuite) TestEstimateGas() {
 			false,
 			20000,
 		},
+		// should fail, the memory expansion costs ~17.7M gas which is within the gas
+		// allowance but above the EIP-7825 transaction gas limit
+		{
+			"gas exceed EIP-7825 transaction gas limit",
+			func() types.TransactionArgs {
+				addr := s.Keyring.GetAddr(0)
+				gas := hexutil.Uint64(20_000_000)
+				data := hexutil.Bytes(common.FromHex("6000622e248052")) // mstore(0x2e2480, 0)
+				return types.TransactionArgs{From: &addr, Gas: &gas, Data: &data}
+			},
+			false,
+			0,
+			false,
+			config.DefaultGasCap,
+		},
 		// estimate gas of an erc20 contract deployment, the exact gas number is checked with geth
 		{
 			"contract deployment",

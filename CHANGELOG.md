@@ -6,6 +6,8 @@
 
 ### API-BREAKING
 
+- Remove the RIP-7212 `precompiles/p256` precompile, `crypto/secp256r1`, `StaticPrecompiles.WithP256Precompile` and `P256PrecompileAddress` in favour of go-ethereum's Osaka `P256VERIFY` precompile at the same address, and rename `StaticPrecompiles.WithPraguePrecompiles` to `WithOsakaPrecompiles`. Existing `0x100` entries in `ActiveStaticPrecompiles` remain valid and need no migration.
+
 ### IMPROVEMENTS
 
 ### FEATURES
@@ -27,6 +29,8 @@
 - [GHSA-pqc8-5qh6-qxjg](https://github.com/cosmos/evm/security/advisories/GHSA-pqc8-5qh6-qxjg) Stop applying the StateDB gas refund counter to internal EVM calls (e.g. from precompiles, the ERC20 module, or other native modules).
 - [GHSA-wprr-wxv3-pj87](https://github.com/cosmos/evm/security/advisories/GHSA-wprr-wxv3-pj87) Cap `eth_getProof` at 1024 storage keys and honor request cancellation between storage proof queries, preventing unauthenticated memory-exhaustion of the node.
 - [GHSA-9mxw-68w9-5fxv](https://github.com/cosmos/evm/security/advisories/GHSA-9mxw-68w9-5fxv) (state-breaking) Reject EIP-712 payloads containing more than 32 messages before conversion, since the superlinear cost of converting large payloads lets a single default-size transaction burn minutes of CPU in signature verification.
+- (state-breaking) Use the Osaka precompile set: MODEXP enforces the EIP-7823 input bound and EIP-7883 pricing, and `P256VERIFY` (EIP-7951) is always available at `0x100` for 6900 gas, including after calls to other precompiles.
+- Apply the EIP-7825 transaction gas limit cap in mempool validation and `eth_estimateGas`.
 
 ## v0.6.5
 
