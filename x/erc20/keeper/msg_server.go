@@ -97,9 +97,9 @@ func (k Keeper) ConvertCoinNativeERC20(ctx sdk.Context, pair types.TokenPair, am
 	erc20 := contracts.ERC20MinterBurnerDecimalsContract.ABI
 	contract := pair.GetERC20Contract()
 
-	balanceToken := k.BalanceOf(ctx, erc20, contract, receiver)
-	if balanceToken == nil {
-		return sdkerrors.Wrap(types.ErrEVMCall, "failed to retrieve balance")
+	balanceToken, err := k.queryERC20Balance(ctx, erc20, contract, receiver)
+	if err != nil {
+		return sdkerrors.Wrap(err, "failed to retrieve balance")
 	}
 
 	// Escrow Coins on module account
@@ -132,9 +132,9 @@ func (k Keeper) ConvertCoinNativeERC20(ctx sdk.Context, pair types.TokenPair, am
 	}
 
 	// Check expected Receiver balance after transfer execution
-	balanceTokenAfter := k.BalanceOf(ctx, erc20, contract, receiver)
-	if balanceTokenAfter == nil {
-		return sdkerrors.Wrap(types.ErrEVMCall, "failed to retrieve balance")
+	balanceTokenAfter, err := k.queryERC20Balance(ctx, erc20, contract, receiver)
+	if err != nil {
+		return sdkerrors.Wrap(err, "failed to retrieve balance")
 	}
 
 	exp := big.NewInt(0).Add(balanceToken, amount.BigInt())

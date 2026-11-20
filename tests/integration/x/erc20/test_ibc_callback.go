@@ -6,6 +6,8 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/cosmos/evm/contracts"
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
@@ -13,6 +15,7 @@ import (
 	"github.com/cosmos/evm/utils"
 	"github.com/cosmos/evm/x/erc20/keeper"
 	"github.com/cosmos/evm/x/erc20/types"
+	erc20mocks "github.com/cosmos/evm/x/erc20/types/mocks"
 	"github.com/cosmos/evm/x/vm/statedb"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
 	transfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
@@ -22,6 +25,7 @@ import (
 	ibcmock "github.com/cosmos/ibc-go/v10/testing/mock"
 
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -453,6 +457,253 @@ func (s *KeeperTestSuite) TestConvertCoinToERC20FromPacket() {
 			}
 		})
 	}
+}
+
+// honestTokenRefund is a refund of a well-behaved registered ERC20's coins that is
+// waiting to be reconverted: the refunded account holds the bank coins and the erc20
+// module holds the tokens to hand back.
+type honestTokenRefund struct {
+	ctx             sdk.Context
+	contractAddress common.Address
+	tokenPair       types.TokenPair
+	refundedAccount sdk.AccAddress
+	refundAmount    math.Int
+	packetData      transfertypes.FungibleTokenPacketData
+}
+
+// setupHonestTokenRefund registers a well-behaved ERC20 and returns a refund of its
+// coins that ConvertCoinToERC20FromPacket can reconvert.
+func (s *KeeperTestSuite) setupHonestTokenRefund() honestTokenRefund {
+	contractAddress, err := s.setupRegisterERC20Pair(contractMinterBurner)
+	s.Require().NoError(err)
+
+	ctx := s.network.GetContext()
+	tokenPairID := s.network.App.GetErc20Keeper().GetTokenPairID(ctx, contractAddress.String())
+	tokenPair, found := s.network.App.GetErc20Keeper().GetTokenPair(ctx, tokenPairID)
+	s.Require().True(found)
+
+	refundedAccount := sdk.AccAddress(s.keyring.GetAddr(0).Bytes())
+	refundAmount := math.NewInt(100)
+	refundedCoins := sdk.NewCoins(sdk.NewCoin(tokenPair.Denom, refundAmount))
+	s.Require().NoError(testutil.FundAccount(ctx, s.network.App.GetBankKeeper(), refundedAccount, refundedCoins))
+
+	stateDB := statedb.New(ctx, s.network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	_, err = s.network.App.GetEVMKeeper().CallEVM(
+		ctx, stateDB, contracts.ERC20MinterBurnerDecimalsContract.ABI, s.keyring.GetAddr(0), contractAddress,
+		true, false, nil, "mint", types.ModuleAddress, refundAmount.BigInt(),
+	)
+	s.Require().NoError(err)
+
+	return honestTokenRefund{
+		ctx:             ctx,
+		contractAddress: contractAddress,
+		tokenPair:       tokenPair,
+		refundedAccount: refundedAccount,
+		refundAmount:    refundAmount,
+		packetData:      transfertypes.NewFungibleTokenPacketData(tokenPair.Denom, refundAmount.String(), refundedAccount.String(), refundedAccount.String(), ""),
+	}
+}
+
+// simulateRefundConversionGas returns the gas ConvertCoinToERC20FromPacket uses for
+// the refund, measured as a relayer's simulation does: on an infinite gas meter and
+// without committing state.
+func (s *KeeperTestSuite) simulateRefundConversionGas(pendingRefund honestTokenRefund) uint64 {
+	simulationGasMeter := storetypes.NewInfiniteGasMeter()
+	simulationCtx, _ := pendingRefund.ctx.WithGasMeter(simulationGasMeter).CacheContext()
+
+	err := s.network.App.GetErc20Keeper().ConvertCoinToERC20FromPacket(simulationCtx, pendingRefund.packetData)
+	s.Require().NoError(err)
+
+	simulatedGas := simulationGasMeter.GasConsumed()
+	s.Require().Positive(simulatedGas)
+
+	return simulatedGas
+}
+
+// requireRefundHeldAs asserts how much of the refund the refunded account holds as
+// ERC20 tokens and how much as bank coins.
+func (s *KeeperTestSuite) requireRefundHeldAs(pendingRefund honestTokenRefund, expectedTokens, expectedCoins math.Int) {
+	senderTokens := s.network.App.GetErc20Keeper().BalanceOf(
+		pendingRefund.ctx, contracts.ERC20MinterBurnerDecimalsContract.ABI,
+		pendingRefund.contractAddress, common.BytesToAddress(pendingRefund.refundedAccount),
+	)
+	s.Require().Equal(expectedTokens.String(), senderTokens.String())
+
+	senderCoins := s.network.App.GetBankKeeper().GetBalance(pendingRefund.ctx, pendingRefund.refundedAccount, pendingRefund.tokenPair.Denom)
+	s.Require().Equal(expectedCoins.String(), senderCoins.Amount.String())
+}
+
+func (s *KeeperTestSuite) TestConvertCoinToERC20FromPacketReconvertsAtSimulatedGasPlusTenPercent() {
+	s.mintFeeCollector = true
+	defer func() { s.mintFeeCollector = false }()
+	s.SetupTest()
+
+	pendingRefund := s.setupHonestTokenRefund()
+	simulatedGas := s.simulateRefundConversionGas(pendingRefund)
+
+	deliveryGasMeter := storetypes.NewGasMeter(simulatedGas + simulatedGas/10)
+	deliveryCtx := pendingRefund.ctx.WithGasMeter(deliveryGasMeter)
+	s.Require().NoError(s.network.App.GetErc20Keeper().ConvertCoinToERC20FromPacket(deliveryCtx, pendingRefund.packetData))
+
+	s.requireRefundHeldAs(pendingRefund, pendingRefund.refundAmount, math.ZeroInt())
+}
+
+func (s *KeeperTestSuite) TestConvertCoinToERC20FromPacketFailsOutOfGasBelowSimulatedGas() {
+	s.mintFeeCollector = true
+	defer func() { s.mintFeeCollector = false }()
+	s.SetupTest()
+
+	pendingRefund := s.setupHonestTokenRefund()
+	simulatedGas := s.simulateRefundConversionGas(pendingRefund)
+
+	// One unit short of the simulated gas, the transaction must fail so the relayer
+	// can retry, not complete with the refund left as bank coins.
+	underfundedCtx := pendingRefund.ctx.WithGasMeter(storetypes.NewGasMeter(simulatedGas - 1))
+	s.Require().PanicsWithValue(
+		storetypes.ErrorOutOfGas{Descriptor: "convert coin to erc20 from packet"},
+		func() {
+			_ = s.network.App.GetErc20Keeper().ConvertCoinToERC20FromPacket(underfundedCtx, pendingRefund.packetData)
+		},
+	)
+
+	s.requireRefundHeldAs(pendingRefund, math.ZeroInt(), pendingRefund.refundAmount)
+}
+
+func (s *KeeperTestSuite) TestConvertCoinToERC20FromPacketFailsOutOfGasWhenFirstEVMCallIsRefused() {
+	s.mintFeeCollector = true
+	defer func() { s.mintFeeCollector = false }()
+	s.SetupTest()
+
+	pendingRefund := s.setupHonestTokenRefund()
+	tokenABI := contracts.ERC20MinterBurnerDecimalsContract.ABI
+	refundedAddress := common.BytesToAddress(pendingRefund.refundedAccount)
+
+	balanceOfCalldata, err := tokenABI.Pack("balanceOf", refundedAddress)
+	s.Require().NoError(err)
+
+	intrinsicGas, err := core.IntrinsicGas(balanceOfCalldata, nil, nil, false, true, true, true)
+	s.Require().NoError(err)
+
+	floorDataGas, err := core.FloorDataGas(balanceOfCalldata)
+	s.Require().NoError(err)
+
+	// A budget just under the floor data gas must still cover the intrinsic gas.
+	s.Require().Greater(floorDataGas, intrinsicGas)
+
+	// The EVM refuses a call whose gas limit is below its intrinsic gas, or covers
+	// that but not its floor data gas, before any gas is used. Either refusal on an
+	// underfunded transaction must fail it, not record a failed conversion.
+	refusedCalls := []struct {
+		name      string
+		gasBudget uint64
+		refusal   error
+	}{
+		{name: "below intrinsic gas", gasBudget: intrinsicGas - 1, refusal: core.ErrIntrinsicGas},
+		{name: "below floor data gas", gasBudget: floorDataGas - 1, refusal: core.ErrFloorDataGas},
+	}
+
+	// Store charges are switched off so the first balanceOf gets the whole budget.
+	freeStoreGasCtx := pendingRefund.ctx.
+		WithKVGasConfig(storetypes.GasConfig{}).
+		WithTransientKVGasConfig(storetypes.GasConfig{})
+
+	for _, refusedCall := range refusedCalls {
+		// The budget really makes the EVM refuse balanceOf for the expected reason.
+		stateDB := statedb.New(pendingRefund.ctx, s.network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+		directCallCtx := freeStoreGasCtx.WithGasMeter(storetypes.NewGasMeter(refusedCall.gasBudget))
+		_, err = s.network.App.GetEVMKeeper().CallEVM(
+			directCallCtx, stateDB, tokenABI, types.ModuleAddress, pendingRefund.contractAddress,
+			false, false, nil, "balanceOf", refundedAddress,
+		)
+		s.Require().ErrorIs(err, refusedCall.refusal, refusedCall.name)
+
+		callbackGasMeter := storetypes.NewGasMeter(refusedCall.gasBudget)
+		callbackCtx := freeStoreGasCtx.WithGasMeter(callbackGasMeter)
+		s.Require().PanicsWithValue(
+			storetypes.ErrorOutOfGas{Descriptor: "convert coin to erc20 from packet"},
+			func() {
+				_ = s.network.App.GetErc20Keeper().ConvertCoinToERC20FromPacket(callbackCtx, pendingRefund.packetData)
+			},
+			refusedCall.name,
+		)
+
+		// The refusal uses no gas, so the callback handed balanceOf the whole budget.
+		s.Require().Zero(callbackGasMeter.GasConsumed(), refusedCall.name)
+		s.requireRefundHeldAs(pendingRefund, math.ZeroInt(), pendingRefund.refundAmount)
+	}
+}
+
+func (s *KeeperTestSuite) TestConvertCoinToERC20FromPacketFailedConversionKeepsRefund() {
+	s.mintFeeCollector = true
+	defer func() { s.mintFeeCollector = false }()
+	s.SetupTest()
+
+	contractAddr, err := s.setupRegisterERC20Pair(contractMinterBurner)
+	s.Require().NoError(err)
+
+	ctx := s.network.GetContext()
+	id := s.network.App.GetErc20Keeper().GetTokenPairID(ctx, contractAddr.String())
+	pair, found := s.network.App.GetErc20Keeper().GetTokenPair(ctx, id)
+	s.Require().True(found)
+
+	transferKeeper := s.network.App.GetTransferKeeper()
+	evmMock := new(erc20mocks.EVMKeeper)
+	customKeeper := keeper.NewKeeper(
+		s.network.App.GetKey(types.StoreKey),
+		s.network.App.AppCodec(),
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		s.network.App.GetAccountKeeper(),
+		s.network.App.GetBankKeeper(),
+		evmMock,
+		s.network.App.GetStakingKeeper(),
+		&transferKeeper,
+	)
+
+	balanceRet, err := contracts.ERC20MinterBurnerDecimalsContract.ABI.Methods["balanceOf"].Outputs.Pack(big.NewInt(0))
+	s.Require().NoError(err)
+	// balanceOf succeeds, transfer fails after the coins have been escrowed.
+	evmMock.On("CallEVM",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, "balanceOf", mock.Anything,
+	).Return(&evmtypes.MsgEthereumTxResponse{Ret: balanceRet}, nil)
+	var activeParentGasMeter storetypes.GasMeter
+	var parentGasBeforeConversion uint64
+	evmMock.On("CallEVM",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, "transfer", mock.Anything, mock.Anything,
+	).Run(func(args mock.Arguments) {
+		parentGasBeforeConversion = activeParentGasMeter.GasConsumed()
+		// a reverted EVM call consumes the whole gas meter
+		evmCtx := args.Get(0).(sdk.Context)
+		evmCtx.GasMeter().ConsumeGas(evmCtx.GasMeter().GasRemaining(), "mock evm revert")
+	}).Return((*evmtypes.MsgEthereumTxResponse)(nil), errors.New("mock evm error"))
+	evmMock.On("KVStoreKeys").Return(map[string]storetypes.StoreKey{}).Maybe()
+
+	sender := sdk.AccAddress(s.keyring.GetAddr(0).Bytes())
+	moduleAddr := authtypes.NewModuleAddress(types.ModuleName)
+	bankKeeper := s.network.App.GetBankKeeper()
+	amount := math.NewInt(100)
+	s.Require().NoError(testutil.FundAccount(ctx, bankKeeper, sender, sdk.NewCoins(sdk.NewCoin(pair.Denom, amount))))
+
+	data := transfertypes.NewFungibleTokenPacketData(pair.Denom, amount.String(), sender.String(), sender.String(), "")
+	// A failed conversion must cost a bounded amount whether the relayer sends a large gas
+	// limit (delivery) or runs on an infinite meter (simulation, which sets its gas estimate).
+	parentGasMetersByName := map[string]storetypes.GasMeter{
+		"delivery with a large gas limit": storetypes.NewGasMeter(10_000_000),
+		"simulation":                      storetypes.NewInfiniteGasMeter(),
+	}
+	for meterName, parentGasMeter := range parentGasMetersByName {
+		meterCtx := ctx.WithGasMeter(parentGasMeter)
+		activeParentGasMeter = parentGasMeter
+		s.Require().NoError(customKeeper.ConvertCoinToERC20FromPacket(meterCtx, data), meterName)
+
+		failedConversionGas := parentGasMeter.GasConsumed() - parentGasBeforeConversion
+		s.Require().Equal(uint64(1_000_000), failedConversionGas, "%s: failed conversion must charge the reconversion gas cap to the parent", meterName)
+		s.Require().Equal(amount, bankKeeper.GetBalance(meterCtx, sender, pair.Denom).Amount, "%s: sender must keep the refunded coins", meterName)
+		s.Require().True(bankKeeper.GetBalance(meterCtx, moduleAddr, pair.Denom).Amount.IsZero(), "%s: module must not escrow coins on failed conversion", meterName)
+	}
+	// the failed transfer must have been attempted
+	evmMock.AssertExpectations(s.T())
 }
 
 func (s *KeeperTestSuite) TestOnAcknowledgementPacket() {
