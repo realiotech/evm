@@ -15,9 +15,13 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	ethmath "github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -275,5 +279,185 @@ func TestPackNumber(t *testing.T) {
 		if !bytes.Equal(packed, tt.packed) {
 			t.Errorf("test %d: pack mismatch: have %x, want %x", i, packed, tt.packed)
 		}
+	}
+}
+
+// TestSetupABIDecodedSizeLimit verifies that SetupABI rejects inputs whose
+// offsets alias a shared dynamic tail, so that the decoded form would be larger
+// than the encoded bytes, and accepts canonical encodings, including static
+// composites placed before dynamic arguments.
+func TestSetupABIDecodedSizeLimit(t *testing.T) {
+	abiJSON := `[{"inputs":[{"internalType":"address","name":"depositor","type":"address"},{"components":[{"internalType":"string","name":"denom","type":"string"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct Coin[]","name":"amount","type":"tuple[]"}],"name":"fundCommunityPool","outputs":[],"stateMutability":"nonpayable","type":"function"},` +
+		`{"inputs":[{"internalType":"string","name":"sourcePort","type":"string"},{"internalType":"string","name":"sourceChannel","type":"string"},{"internalType":"string","name":"denom","type":"string"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"address","name":"sender","type":"address"},{"internalType":"string","name":"receiver","type":"string"},{"components":[{"internalType":"uint64","name":"revisionNumber","type":"uint64"},{"internalType":"uint64","name":"revisionHeight","type":"uint64"}],"internalType":"struct Height","name":"timeoutHeight","type":"tuple"},{"internalType":"uint64","name":"timeoutTimestamp","type":"uint64"},{"internalType":"string","name":"memo","type":"string"}],"name":"transfer","outputs":[{"internalType":"uint64","name":"nextSequence","type":"uint64"}],"stateMutability":"nonpayable","type":"function"},` +
+		`{"inputs":[{"internalType":"uint256[2]","name":"values","type":"uint256[2]"},{"components":[{"internalType":"uint256","name":"a","type":"uint256"},{"internalType":"uint256[2]","name":"b","type":"uint256[2]"}],"internalType":"struct S","name":"s","type":"tuple"},{"internalType":"string","name":"name","type":"string"},{"internalType":"bytes[]","name":"proofs","type":"bytes[]"}],"name":"fixed","outputs":[],"stateMutability":"nonpayable","type":"function"},` +
+		`{"inputs":[{"internalType":"string[][]","name":"values","type":"string[][]"}],"name":"nested","outputs":[],"stateMutability":"nonpayable","type":"function"}]`
+	testABI, err := abi.JSON(strings.NewReader(abiJSON))
+	require.NoError(t, err)
+	isTx := func(*abi.Method) bool { return false }
+
+	pack := func(method string, args ...interface{}) []byte {
+		packed, err := testABI.Methods[method].Inputs.Pack(args...)
+		require.NoError(t, err)
+		return packed
+	}
+	word := func(v int64) []byte {
+		return ethmath.U256Bytes(big.NewInt(v))
+	}
+
+	type coin struct {
+		Denom  string
+		Amount *big.Int
+	}
+	depositor := common.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	oneEther, ok := new(big.Int).SetString("1000000000000000000", 10)
+	require.True(t, ok)
+
+	const (
+		numElements = 1000
+		strLength   = 400
+		paddedLen   = ((strLength + 31) / 32) * 32
+		numOuter    = 200
+		numInner    = 200
+	)
+
+	// Every tuple head references the same tuple, whose string head references
+	// a shared tail: encoded length is O(N + M) while the decoded form is O(N * M).
+	var aliasedCoins []byte
+	aliasedCoins = append(aliasedCoins, common.LeftPadBytes(depositor.Bytes(), 32)...)
+	aliasedCoins = append(aliasedCoins, word(64)...)          // coins offset
+	aliasedCoins = append(aliasedCoins, word(numElements)...) // array length
+	for i := 0; i < numElements; i++ {
+		aliasedCoins = append(aliasedCoins, word(numElements*32)...) // tuple relative to element heads
+	}
+	aliasedCoins = append(aliasedCoins, word(64)...)                // string offset within tuple
+	aliasedCoins = append(aliasedCoins, word(1)...)                 // amount
+	aliasedCoins = append(aliasedCoins, word(strLength)...)         // string length
+	aliasedCoins = append(aliasedCoins, make([]byte, paddedLen)...) // padded string content
+
+	// The same shape with distinct tails.
+	var distinctCoins []byte
+	distinctCoins = append(distinctCoins, common.LeftPadBytes(depositor.Bytes(), 32)...)
+	distinctCoins = append(distinctCoins, word(64)...)
+	distinctCoins = append(distinctCoins, word(numElements)...)
+	elemsHeadPos := len(distinctCoins)
+	distinctCoins = append(distinctCoins, make([]byte, numElements*32)...)
+	for i := 0; i < numElements; i++ {
+		copy(distinctCoins[elemsHeadPos+32*i:], word(int64(len(distinctCoins)-elemsHeadPos)))
+		distinctCoins = append(distinctCoins, word(64)...)
+		distinctCoins = append(distinctCoins, word(1)...)
+		distinctCoins = append(distinctCoins, word(strLength)...)
+		distinctCoins = append(distinctCoins, make([]byte, paddedLen)...)
+	}
+
+	// N outer string[] offsets alias one inner array of M offsets that all
+	// point to the same empty string: encoded in O(N + M) bytes but decoded
+	// into N separate M-element slices.
+	var aliasedNested []byte
+	aliasedNested = append(aliasedNested, word(32)...)       // outer slice offset
+	aliasedNested = append(aliasedNested, word(numOuter)...) // outer slice length
+	for i := 0; i < numOuter; i++ {
+		aliasedNested = append(aliasedNested, word(numOuter*32)...) // inner slice right after the heads
+	}
+	aliasedNested = append(aliasedNested, word(numInner)...) // inner slice length
+	for i := 0; i < numInner; i++ {
+		aliasedNested = append(aliasedNested, word(numInner*32)...) // empty string right after the heads
+	}
+	aliasedNested = append(aliasedNested, word(0)...) // empty string length
+
+	testCases := []struct {
+		name   string
+		method string
+		input  []byte
+		expErr string
+		check  func(t *testing.T, args []interface{})
+	}{
+		{
+			name:   "canonical tuple array",
+			method: "fundCommunityPool",
+			input:  pack("fundCommunityPool", depositor, []coin{{Denom: strings.Repeat("a", 100), Amount: big.NewInt(1)}}),
+		},
+		{
+			name:   "static tuple fields larger than the input are not read as offsets",
+			method: "fundCommunityPool",
+			input:  pack("fundCommunityPool", depositor, []coin{{Denom: "stake", Amount: big.NewInt(1000)}, {Denom: "aatom", Amount: oneEther}}),
+			check: func(t *testing.T, args []interface{}) {
+				t.Helper()
+				require.Len(t, args, 2)
+			},
+		},
+		{
+			name:   "tuple array heads aliasing one tail",
+			method: "fundCommunityPool",
+			input:  aliasedCoins,
+			expErr: "cumulative decoded size exceeds encoded input size",
+		},
+		{
+			name:   "tuple array heads with distinct tails",
+			method: "fundCommunityPool",
+			input:  distinctCoins,
+		},
+		{
+			// the two-word timeoutHeight tuple puts the memo offset at head word 9
+			name:   "static tuple before dynamic arguments",
+			method: "transfer",
+			input: pack("transfer",
+				"transfer", "channel-0", "aatom", oneEther, depositor, "cosmos1receiver",
+				struct {
+					RevisionNumber uint64
+					RevisionHeight uint64
+				}{RevisionNumber: 1, RevisionHeight: 1_000_000},
+				uint64(1_700_000_000_000_000_000),
+				"memo",
+			),
+			check: func(t *testing.T, args []interface{}) {
+				t.Helper()
+				require.Equal(t, "memo", args[8])
+			},
+		},
+		{
+			name:   "fixed arrays before dynamic arguments",
+			method: "fixed",
+			input: pack("fixed",
+				[2]*big.Int{oneEther, oneEther},
+				struct {
+					A *big.Int
+					B [2]*big.Int
+				}{A: oneEther, B: [2]*big.Int{oneEther, oneEther}},
+				"name",
+				[][]byte{[]byte("proof-a"), []byte("proof-b")},
+			),
+			check: func(t *testing.T, args []interface{}) {
+				t.Helper()
+				require.Equal(t, "name", args[2])
+				require.Equal(t, [][]byte{[]byte("proof-a"), []byte("proof-b")}, args[3])
+			},
+		},
+		{
+			name:   "canonical nested string arrays",
+			method: "nested",
+			input:  pack("nested", [][]string{{"a", ""}, {}, {"b"}}),
+		},
+		{
+			name:   "nested string arrays aliasing one inner array",
+			method: "nested",
+			input:  aliasedNested,
+			expErr: "cumulative decoded size exceeds encoded input size",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := append(append([]byte{}, testABI.Methods[tc.method].ID...), tc.input...)
+			method, args, err := SetupABI(testABI, &vm.Contract{Input: input}, false, isTx)
+			if tc.expErr != "" {
+				require.ErrorContains(t, err, tc.expErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.method, method.Name)
+			if tc.check != nil {
+				tc.check(t, args)
+			}
+		})
 	}
 }

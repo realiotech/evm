@@ -70,7 +70,7 @@ func BlockedAddresses() map[string]bool {
 	}
 
 	blockedPrecompilesHex := evmtypes.AvailableStaticPrecompiles
-	for _, addr := range corevm.PrecompiledAddressesPrague {
+	for _, addr := range corevm.PrecompiledAddressesOsaka {
 		blockedPrecompilesHex = append(blockedPrecompilesHex, addr.Hex())
 	}
 

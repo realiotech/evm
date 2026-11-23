@@ -26,6 +26,23 @@ var _ statedb.Keeper = &Keeper{}
 // StateDB Keeper implementation
 // ----------------------------------------------------------------------------
 
+// isModuleAddress reports whether addr is reserved for a module account:
+// either its name is in the module permission table (which x/auth
+// materialises lazily, so there may be no stored account yet) or the
+// stored account is a module account.
+func (k *Keeper) isModuleAddress(ctx sdk.Context, addr sdk.AccAddress) bool {
+	for _, perms := range k.accountKeeper.GetModulePermissions() {
+		if perms.GetAddress().Equals(addr) {
+			return true
+		}
+	}
+	if acct := k.accountKeeper.GetAccount(ctx, addr); acct != nil {
+		_, isModule := acct.(sdk.ModuleAccountI)
+		return isModule
+	}
+	return false
+}
+
 // GetAccount returns nil if account is not exist
 func (k *Keeper) GetAccount(ctx sdk.Context, addr common.Address) *statedb.Account {
 	cosmosAddr := sdk.AccAddress(addr.Bytes())
@@ -151,10 +168,12 @@ func (k *Keeper) SetBalanceWithLocked(ctx sdk.Context, addr common.Address, amou
 	}
 	cosmosAddr := sdk.AccAddress(addr.Bytes())
 
-	if acct := k.accountKeeper.GetAccount(ctx, cosmosAddr); acct != nil {
-		if _, isModule := acct.(sdk.ModuleAccountI); isModule {
-			return errorsmod.Wrapf(errortypes.ErrUnauthorized, "%s is not allowed to receive funds", cosmosAddr)
-		}
+	// A module address reserved by name in the module permission table that
+	// x/auth has not materialised yet has no stored account;
+	// isModuleAddress consults the table as well as the stored account type.
+	// Any balance write to such a reservation is refused.
+	if k.isModuleAddress(ctx, cosmosAddr) {
+		return errorsmod.Wrapf(errortypes.ErrUnauthorized, "%s is not allowed to receive funds", cosmosAddr)
 	}
 
 	// Reconstruct the target bank balance as spendable + locked snapshot,
@@ -181,6 +200,15 @@ func (k *Keeper) SetBalanceWithLocked(ctx sdk.Context, addr common.Address, amou
 
 // SetAccount updates nonce/balance/codeHash together.
 func (k *Keeper) SetAccount(ctx sdk.Context, addr common.Address, account statedb.Account) error {
+	// Refuse EVM-initiated account creation or updates on a module-reserved
+	// address before anything is persisted. BlockedAddr is not checked here:
+	// it also lists every precompile, and a precompile gets its account on its
+	// first call.
+	cosmosAddr := sdk.AccAddress(addr.Bytes())
+	if k.isModuleAddress(ctx, cosmosAddr) {
+		return errorsmod.Wrapf(errortypes.ErrUnauthorized, "%s is not allowed to receive funds", cosmosAddr)
+	}
+
 	// update account
 	acct := k.accountKeeper.GetAccount(ctx, addr.Bytes())
 	if acct == nil {

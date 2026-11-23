@@ -1,11 +1,7 @@
 package types
 
 const (
-	P256PrecompileAddress   = "0x0000000000000000000000000000000000000100"
-	Bech32PrecompileAddress = "0x0000000000000000000000000000000000000400"
-)
-
-const (
+	Bech32PrecompileAddress       = "0x0000000000000000000000000000000000000400"
 	StakingPrecompileAddress      = "0x0000000000000000000000000000000000000800"
 	DistributionPrecompileAddress = "0x0000000000000000000000000000000000000801"
 	ICS20PrecompileAddress        = "0x0000000000000000000000000000000000000802"
@@ -20,7 +16,6 @@ const (
 // NOTE: To be explicit, this list does not include the dynamically registered EVM extensions
 // like the ERC-20 extensions.
 var AvailableStaticPrecompiles = []string{
-	P256PrecompileAddress,
 	Bech32PrecompileAddress,
 	StakingPrecompileAddress,
 	DistributionPrecompileAddress,

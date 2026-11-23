@@ -6,10 +6,13 @@
 package ibc
 
 import (
+	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethparams "github.com/ethereum/go-ethereum/params"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/cosmos/evm/contracts"
@@ -19,6 +22,7 @@ import (
 	evmibctesting "github.com/cosmos/evm/testutil/ibc"
 	testutiltypes "github.com/cosmos/evm/testutil/types"
 	"github.com/cosmos/evm/utils"
+	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	"github.com/cosmos/evm/x/vm/statedb"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -714,6 +718,114 @@ func (suite *ICS20RecursivePrecompileCallsTestSuite) TestContractICS20TransferWi
 
 	// Verify event count
 	suite.Require().Equal(PreciseBankMintEventCount+PreciseBankBurnEventCount+DelegationEventCount+ICS20WithConversionEventCount+EVMEventCount, len(res.Events), "should have 41 events")
+}
+
+// convertRecorder wraps the x/erc20 keeper of the ICS20 precompile and records
+// the ERC20 conversions reached by accepted ICS20 calls. A conversion runs inside
+// the conversion of the ICS20 call that created the StateDB issuing it, so its Go
+// nesting level is the number of StateDBs enclosing that StateDB.
+type convertRecorder struct {
+	erc20keeper.Keeper
+
+	nesting    uint64
+	maxNesting uint64
+	calls      uint64
+}
+
+func (r *convertRecorder) ConvertERC20IntoCoinsForNativeToken(
+	ctx sdk.Context,
+	stateDB *statedb.StateDB,
+	contract common.Address,
+	amount sdkmath.Int,
+	receiver sdk.AccAddress,
+	sender common.Address,
+	commit bool,
+	callFromPrecompile bool,
+) (*erc20types.MsgConvertERC20Response, error) {
+	r.calls++
+	r.maxNesting = max(r.maxNesting, r.nesting)
+	// Stop recursing once the limit is exceeded, so the test fails instead of
+	// running unbounded when the limit is not enforced.
+	if r.calls > evmtypes.MaxPrecompileCalls {
+		return nil, errors.New("precompile call limit exceeded")
+	}
+
+	r.nesting++
+	defer func() { r.nesting-- }()
+	return r.Keeper.ConvertERC20IntoCoinsForNativeToken(ctx, stateDB, contract, amount, receiver, sender, commit, callFromPrecompile)
+}
+
+// TestRecursiveBalanceOfPrecompileCallLimits sends an ICS20 transfer of an ERC20
+// whose balanceOf calls the ICS20 precompile again for its own denom. Each
+// accepted ICS20 call converts the token through x/erc20, whose BalanceOf runs
+// balanceOf in a new StateDB, so the ICS20 calls recurse through nested StateDBs.
+func (suite *ICS20RecursivePrecompileCallsTestSuite) TestRecursiveBalanceOfPrecompileCallLimits() {
+	suite.SetupTest() // reset
+
+	pathAToB := evmibctesting.NewTransferPath(suite.chainA, suite.chainB)
+	pathAToB.Setup()
+
+	evmAppA := suite.chainA.App.(*evmd.EVMD)
+	recorder := &convertRecorder{Keeper: evmAppA.Erc20Keeper}
+	precompile := ics20.NewPrecompile(
+		evmAppA.BankKeeper,
+		*evmAppA.StakingKeeper,
+		evmAppA.TransferKeeper,
+		evmAppA.IBCKeeper.ChannelKeeper,
+		recorder,
+	)
+	evmAppA.EVMKeeper.RegisterStaticPrecompile(precompile.Address(), precompile)
+
+	contractData, err := contracts.LoadERC20RecursiveBalanceOf()
+	suite.Require().NoError(err)
+
+	receiver := suite.chainB.SenderAccount.GetAddress().String()
+	contractAddr, err := DeployContract(suite.T(), suite.chainA, testutiltypes.ContractDeploymentData{
+		Contract:        contractData,
+		ConstructorArgs: []interface{}{pathAToB.EndpointA.ChannelID, receiver},
+	})
+	suite.Require().NoError(err)
+	suite.chainA.NextBlock()
+
+	_, err = evmAppA.Erc20Keeper.RegisterERC20(suite.chainA.GetContext(), &erc20types.MsgRegisterERC20{
+		Signer:         evmAppA.AccountKeeper.GetModuleAddress("gov").String(),
+		Erc20Addresses: []string{contractAddr.Hex()},
+	})
+	suite.Require().NoError(err)
+	suite.chainA.NextBlock()
+
+	data, err := contractData.ABI.Pack("trigger")
+	suite.Require().NoError(err)
+
+	// Use the maximum transaction gas so the recursion is stopped by the
+	// precompile call limit rather than by running out of gas.
+	senderAccount := suite.chainA.SenderAccounts[SenderIndex]
+	_, _, ethRes, err := suite.chainA.SendEvmTx(senderAccount, SenderIndex, contractAddr, big.NewInt(0), data, ethparams.MaxTxGas)
+	suite.Require().NoError(err)
+
+	suite.Require().LessOrEqual(recorder.calls, evmtypes.MaxPrecompileCalls,
+		"precompile calls accepted across the top-level StateDB and the nested ones should not exceed the limit")
+	suite.Require().Greater(recorder.maxNesting, uint64(1),
+		"the recursion should reach more than one nested StateDB")
+
+	// The top-level ICS20 call fails its conversion after the nested calls have
+	// run, and must be charged for that work rather than only its RequiredGas.
+	var ics20Gas *big.Int
+	suite.Require().NoError(contractData.ABI.UnpackIntoInterface(&ics20Gas, "trigger", ethRes.Ret))
+	input, err := precompile.Pack("transfer",
+		pathAToB.EndpointA.ChannelConfig.PortID,
+		pathAToB.EndpointA.ChannelID,
+		erc20types.Erc20NativeCoinDenomPrefix+strings.ToLower(contractAddr.Hex()),
+		big.NewInt(1),
+		contractAddr,
+		receiver,
+		clienttypes.NewHeight(1, TimeoutHeight),
+		uint64(0),
+		"",
+	)
+	suite.Require().NoError(err)
+	suite.Require().Greater(ics20Gas.Uint64(), evmtypes.MaxPrecompileCalls*precompile.RequiredGas(input),
+		"failing ICS20 calls should be charged for the work under them")
 }
 
 // TestContractICS20TransferRevertWithDelegationHook tests a contract with reverted ERC20 transfer

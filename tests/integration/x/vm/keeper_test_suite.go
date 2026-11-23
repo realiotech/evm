@@ -98,6 +98,7 @@ func (s *KeeperTestSuite) SetupTest() {
 		chainConfig.ShanghaiTime = &maxInt
 		chainConfig.CancunTime = &maxInt
 		chainConfig.PragueTime = &maxInt
+		chainConfig.OsakaTime = &maxInt
 	}
 	// get the denom and decimals set on chain initialization
 	// because we'll need to set them again when resetting the chain config

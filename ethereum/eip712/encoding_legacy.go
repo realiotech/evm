@@ -212,6 +212,10 @@ func legacyValidatePayloadMessages(msgs []sdk.Msg) error {
 		return errors.New("unable to build EIP-712 payload: transaction does contain any messages")
 	}
 
+	if len(msgs) > MaxPayloadMessages {
+		return fmt.Errorf("unable to build EIP-712 payload: number of messages (%d) exceeds the maximum of %d", len(msgs), MaxPayloadMessages)
+	}
+
 	var msgType string
 	var msgSigner sdk.AccAddress
 

@@ -73,18 +73,36 @@ type StateDB struct {
 
 	// Per-transaction logs
 	logs []*ethtypes.Log
+	// Aggregate data size of the retained logs
+	logsDataSize int
+	// logLimitErr is set when a log is dropped because the per-transaction
+	// log limits were reached. It is never cleared.
+	logLimitErr error
 
 	// Per-transaction access list
 	accessList *accessList
 
-	// The count of calls to precompiles
-	precompileCallsCounter uint64
+	// The precompile call limit shared with the top-level StateDB and every
+	// StateDB nested in its precompile calls
+	precompileScope precompileCallScope
 
 	// processedEventsCount tracks how many events have been
 	// processed by BalanceHandler. Events are processed sequentially starting
 	// from index 0. Event counter tracks events to avoid having them reprocessed.
 	// On revert, this counter is rewound to the snapshot's event count.
 	processedEventsCount int
+}
+
+// precompileCallScopeKey is the sdk.Context value key of the
+// precompileCallScope of the StateDB that owns the context.
+type precompileCallScopeKey struct{}
+
+// precompileCallScope tracks the precompile calls of a top-level StateDB
+// and every StateDB nested in its precompile calls.
+type precompileCallScope struct {
+	// calls is the number of precompile calls, shared by the top-level
+	// StateDB and every StateDB nested in it.
+	calls *uint64
 }
 
 func (s *StateDB) CreateContract(address common.Address) {
@@ -151,7 +169,20 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 
 // New creates a new state from a given trie.
 func New(ctx sdk.Context, keeper Keeper, txConfig TxConfig) *StateDB {
+	// A StateDB created from the context of another StateDB (e.g. by a
+	// precompile call) shares its precompile call counter, so the limit
+	// applies to a top-level StateDB and every StateDB nested in its precompile
+	// calls. A context that carries no scope starts a new top-level counter.
+	scope := precompileCallScope{calls: new(uint64)}
+	if ctx.Context() != nil {
+		if parent, ok := ctx.Value(precompileCallScopeKey{}).(precompileCallScope); ok {
+			scope = parent
+		}
+		ctx = ctx.WithValue(precompileCallScopeKey{}, scope)
+	}
+
 	return &StateDB{
+		precompileScope:      scope,
 		keeper:               keeper,
 		ctx:                  ctx,
 		stateObjects:         make(map[common.Address]*stateObject),
@@ -219,12 +250,33 @@ func (s *StateDB) cache() error {
 }
 
 // AddLog adds a log, called by evm.
+// Logs exceeding MaxLogsPerTx or MaxLogDataBytesPerTx are dropped and
+// LogLimitError reports the failure.
 func (s *StateDB) AddLog(log *ethtypes.Log) {
+	if s.logLimitErr != nil {
+		return
+	}
+	if len(s.logs) >= types.MaxLogsPerTx {
+		s.logLimitErr = fmt.Errorf("max number of logs per transaction (%d) exceeded", types.MaxLogsPerTx)
+		return
+	}
+	if len(log.Data) > types.MaxLogDataBytesPerTx-s.logsDataSize {
+		s.logLimitErr = fmt.Errorf("max log data size per transaction (%d bytes) exceeded", types.MaxLogDataBytesPerTx)
+		return
+	}
+
 	s.journal.append(addLogChange{})
 
 	log.TxIndex = s.txConfig.TxIndex
 	log.Index = s.txConfig.LogIndex + uint(len(s.logs))
 	s.logs = append(s.logs, log)
+	s.logsDataSize += len(log.Data)
+}
+
+// LogLimitError returns a non-nil error if a log was dropped because the
+// per-transaction log limits were reached.
+func (s *StateDB) LogLimitError() error {
+	return s.logLimitErr
 }
 
 // Logs returns the logs of current transaction.
@@ -442,7 +494,10 @@ func (s *StateDB) AddPrecompileFn(snapshot int) error {
 
 	// Reject before mutating the counter so that rejected calls cannot
 	// advance (and eventually wrap) it back into the accepted range.
-	if s.precompileCallsCounter >= types.MaxPrecompileCalls {
+	if s.precompileScope.calls == nil {
+		s.precompileScope.calls = new(uint64)
+	}
+	if *s.precompileScope.calls >= types.MaxPrecompileCalls {
 		return fmt.Errorf("max calls to precompiles (%d) reached", types.MaxPrecompileCalls)
 	}
 
@@ -451,7 +506,7 @@ func (s *StateDB) AddPrecompileFn(snapshot int) error {
 		prevEvents:              prevEvents,
 		prevProcessedEventCount: s.processedEventsCount,
 	})
-	s.precompileCallsCounter++
+	*s.precompileScope.calls++
 	return nil
 }
 

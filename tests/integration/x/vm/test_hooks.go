@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
+	"github.com/cosmos/evm/testutil/integration/evm/utils"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/statedb"
 	"github.com/cosmos/evm/x/vm/types"
@@ -126,7 +127,7 @@ func (s *KeeperTestSuite) TestPostTxProcessingFailureLogReversion() {
 	msg := tx.GetMsgs()[0].(*types.MsgEthereumTx)
 
 	// Execute transaction - should fail in PostTxProcessing
-	res, err := k.EthereumTx(ctx, msg)
+	res, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, k, msg)
 
 	// Verify the transaction execution itself doesn't error, but PostTxProcessing fails
 	s.Require().NoError(err, "EthereumTx should not return error")

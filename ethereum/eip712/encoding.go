@@ -203,11 +203,23 @@ func validateCodecInit() error {
 	return nil
 }
 
+// MaxPayloadMessages is the maximum number of messages an EIP-712 payload may
+// contain. The cost of converting a Cosmos payload to its EIP-712 representation
+// grows superlinearly with the number of messages, and EIP-712 signing targets
+// wallet-signed payloads of a handful of messages, so payloads beyond this
+// limit are rejected instead of converted.
+const MaxPayloadMessages = 32
+
 // validatePayloadMessages ensures that the transaction messages can be represented in an EIP-712
-// encoding by checking that messages exist and share a single signer.
+// encoding by checking that messages exist, do not exceed the maximum payload
+// size, and share a single signer.
 func validatePayloadMessages(msgs []sdk.Msg) error {
 	if len(msgs) == 0 {
 		return errors.New("unable to build EIP-712 payload: transaction does contain any messages")
+	}
+
+	if len(msgs) > MaxPayloadMessages {
+		return fmt.Errorf("unable to build EIP-712 payload: number of messages (%d) exceeds the maximum of %d", len(msgs), MaxPayloadMessages)
 	}
 
 	var msgSigner sdk.AccAddress

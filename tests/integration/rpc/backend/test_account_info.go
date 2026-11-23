@@ -1,20 +1,27 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc/metadata"
 
+	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/cometbft/cometbft/libs/bytes"
 	cmtrpcclient "github.com/cometbft/cometbft/rpc/client"
+	cmtrpctypes "github.com/cometbft/cometbft/rpc/core/types"
 
 	"github.com/cosmos/evm/rpc/backend/mocks"
+	ethns "github.com/cosmos/evm/rpc/namespaces/ethereum/eth"
 	rpctypes "github.com/cosmos/evm/rpc/types"
 	utiltx "github.com/cosmos/evm/testutil/tx"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	"cosmossdk.io/log"
 
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
@@ -223,7 +230,7 @@ func (s *TestSuite) TestGetProof() {
 			s.SetupTest()
 			tc.registerMock(*tc.blockNrOrHash.BlockNumber, tc.addr)
 
-			accRes, err := s.backend.GetProof(tc.addr, tc.storageKeys, tc.blockNrOrHash)
+			accRes, err := s.backend.GetProof(context.Background(), tc.addr, tc.storageKeys, tc.blockNrOrHash)
 
 			if tc.expPass {
 				s.Require().NoError(err)
@@ -233,6 +240,38 @@ func (s *TestSuite) TestGetProof() {
 			}
 		})
 	}
+}
+
+// TestGetProofCancellation verifies that cancelling an eth_getProof request
+// after its first storage proof prevents any further storage-proof queries.
+func (s *TestSuite) TestGetProofCancellation() {
+	blockNr := rpctypes.NewBlockNumber(big.NewInt(4))
+	height := blockNr.Int64()
+	address1 := utiltx.GenerateAddress()
+
+	s.backend.Ctx = rpctypes.ContextWithHeight(height)
+	client := s.backend.ClientCtx.Client.(*mocks.Client)
+	RegisterHeader(client, &height, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Only the first storage key is expected to be queried; the request is
+	// cancelled while it is being served. Any further ABCI query fails the mock.
+	client.On(
+		"ABCIQueryWithOptions",
+		mock.Anything,
+		"store/evm/key",
+		bytes.HexBytes(evmtypes.StateKey(address1, common.HexToHash("0x0").Bytes())),
+		cmtrpcclient.ABCIQueryOptions{Height: height, Prove: true},
+	).Run(func(mock.Arguments) {
+		cancel()
+	}).Return(&cmtrpctypes.ResultABCIQuery{Response: abci.ResponseQuery{Value: []byte{2}, Height: height}}, nil).Once()
+
+	api := ethns.NewPublicAPI(log.NewNopLogger(), s.backend)
+	_, err := api.GetProof(ctx, address1, []string{"0x0", "0x1"}, rpctypes.BlockNumberOrHash{BlockNumber: &blockNr})
+	s.Require().ErrorIs(err, context.Canceled)
+	client.AssertNumberOfCalls(s.T(), "ABCIQueryWithOptions", 1)
 }
 
 func (s *TestSuite) TestGetStorageAt() {

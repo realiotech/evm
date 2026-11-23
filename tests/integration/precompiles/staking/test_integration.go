@@ -2622,7 +2622,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 					valAddr.String(), big.NewInt(1e18), big.NewInt(expCreationHeight),
 				}
 
-				txArgs.GasLimit = 50_000_000
+				txArgs.GasLimit = 16_000_000
 
 				logCheckArgs := passCheck.
 					WithExpEvents(staking.EventTypeCancelUnbondingDelegation)
@@ -3310,7 +3310,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 
 				callArgs.MethodName = "testDelegateIncrementCounter"
 				callArgs.Args = []interface{}{valAddr.String()}
-				txArgs.GasLimit = 50_000_000
+				txArgs.GasLimit = 16_000_000
 				txArgs.Amount = delegationAmount
 
 				delegationCheck := passCheck.WithExpEvents(
@@ -3360,7 +3360,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 				callArgs.Args = []interface{}{valAddr.String()}
 
 				txArgs.Amount = delegationAmount
-				txArgs.GasLimit = 50_000_000
+				txArgs.GasLimit = 16_000_000
 
 				delegationCheck := passCheck.WithExpEvents(
 					staking.EventTypeDelegate,
@@ -3392,7 +3392,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 				callArgs.Args = []interface{}{valAddr.String()}
 
 				txArgs.Amount = big.NewInt(2e18)
-				txArgs.GasLimit = 50_000_000
+				txArgs.GasLimit = 16_000_000
 
 				delegationCheck := defaultLogCheck.WithErrContains(vm.ErrExecutionReverted.Error())
 				_, _, err = s.factory.CallContractAndCheckLogs(

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -9,7 +11,9 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 
+	"github.com/ethereum/go-ethereum/eth/tracers"
 	ethmetricsexp "github.com/ethereum/go-ethereum/metrics/exp"
+	ethparams "github.com/ethereum/go-ethereum/params"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -53,6 +57,24 @@ import (
 	sdkmempool "github.com/cosmos/cosmos-sdk/types/mempool"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 )
+
+// ErrCustomJSTracerDisabled is returned when a trace request names a tracer
+// that is not registered, which go-ethereum would otherwise evaluate as
+// caller-supplied JavaScript source.
+var ErrCustomJSTracerDisabled = errors.New("custom JavaScript tracer code is not allowed, only registered tracer names can be used")
+
+// DisableCustomJSTracers replaces go-ethereum's evaluator for unregistered
+// tracer names, which would otherwise run them as caller-supplied JavaScript.
+// The JavaScript engine runs a tracer's constructor synchronously before the
+// trace deadline is installed and cannot be interrupted, so code with an
+// infinite loop would pin a CPU core indefinitely. Replacing the evaluator in
+// the default directory also covers tracers constructed indirectly, such as
+// the children of muxTracer. The replacement is process-wide.
+func DisableCustomJSTracers() {
+	tracers.DefaultDirectory.RegisterJSEval(func(string, *tracers.Context, json.RawMessage, *ethparams.ChainConfig) (*tracers.Tracer, error) {
+		return nil, ErrCustomJSTracerDisabled
+	})
+}
 
 // DBOpener is a function to open `application.db`, potentially with customized options.
 type DBOpener func(opts types.AppOptions, rootDir string, backend dbm.BackendType) (dbm.DB, error)
@@ -216,6 +238,7 @@ which accepts a path for the resulting pprof file.
 	cmd.Flags().Bool(srvflags.JSONRPCEnableIndexer, false, "Enable the custom tx indexer for json-rpc")
 	cmd.Flags().Bool(srvflags.JSONRPCEnableMetrics, false, "Define if EVM rpc metrics server should be enabled")
 	cmd.Flags().Bool(srvflags.JSONRPCEnableProfiling, false, "Enables the profiling in the debug namespace")
+	cmd.Flags().Bool(srvflags.JSONRPCEnableCustomJSTracers, cosmosevmserverconfig.DefaultEnableCustomJSTracers, "Allows trace queries to evaluate custom JavaScript tracer code. Should not be enabled on nodes serving untrusted trace requests") //nolint:lll
 
 	cmd.Flags().String(srvflags.EVMTracer, cosmosevmserverconfig.DefaultEVMTracer, "the EVM tracer type to collect execution traces from the EVM transaction execution (json|struct|access_list|markdown)") //nolint:lll
 	cmd.Flags().Uint64(srvflags.EVMMaxTxGasWanted, cosmosevmserverconfig.DefaultMaxTxGasWanted, "the gas wanted for each eth tx returned in ante handler in check tx mode")                                 //nolint:lll
@@ -293,6 +316,10 @@ func startStandAlone(svrCtx *server.Context, clientCtx client.Context, opts Star
 	if err := config.ValidateBasic(); err != nil {
 		svrCtx.Logger.Error("invalid server config", "error", err.Error())
 		return err
+	}
+
+	if !config.JSONRPC.EnableCustomJSTracers {
+		DisableCustomJSTracers()
 	}
 
 	_, err = startTelemetry(config)
@@ -389,6 +416,10 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 	if err := config.ValidateBasic(); err != nil {
 		logger.Error("invalid server config", "error", err.Error())
 		return err
+	}
+
+	if !config.JSONRPC.EnableCustomJSTracers {
+		DisableCustomJSTracers()
 	}
 
 	app = opts.AppCreator(svrCtx.Logger, db, traceWriter, svrCtx.Viper)

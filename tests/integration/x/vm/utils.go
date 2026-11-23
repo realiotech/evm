@@ -12,6 +12,7 @@ import (
 
 	"github.com/cosmos/evm/crypto/ethsecp256k1"
 	servercfg "github.com/cosmos/evm/server/config"
+	"github.com/cosmos/evm/testutil/integration/evm/utils"
 	testKeyring "github.com/cosmos/evm/testutil/keyring"
 	utiltx "github.com/cosmos/evm/testutil/tx"
 	"github.com/cosmos/evm/x/vm/keeper/testdata"
@@ -85,7 +86,7 @@ func (s *KeeperTestSuite) DeployTestContract(t require.TestingT, ctx sdk.Context
 	erc20DeployTx.From = addr.Bytes()
 	err = erc20DeployTx.Sign(ethtypes.LatestSignerForChainID(chainID), krSigner)
 	require.NoError(t, err)
-	rsp, err := s.Network.App.GetEVMKeeper().EthereumTx(ctx, erc20DeployTx)
+	rsp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.Network.App.GetEVMKeeper(), erc20DeployTx)
 	require.NoError(t, err)
 	require.Empty(t, rsp.VmError)
 	return crypto.CreateAddress(addr, nonce)
@@ -142,7 +143,7 @@ func (s *KeeperTestSuite) TransferERC20Token(t require.TestingT, contractAddr, f
 	ercTransferTx.From = addr.Bytes()
 	err = ercTransferTx.Sign(ethtypes.LatestSignerForChainID(chainID), krSigner)
 	require.NoError(t, err)
-	rsp, err := s.Network.App.GetEVMKeeper().EthereumTx(ctx, ercTransferTx)
+	rsp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.Network.App.GetEVMKeeper(), ercTransferTx)
 	require.NoError(t, err)
 	require.Empty(t, rsp.VmError)
 	return ercTransferTx
@@ -201,7 +202,7 @@ func (s *KeeperTestSuite) DeployTestMessageCall(t require.TestingT) common.Addre
 	erc20DeployTx.From = addr.Bytes()
 	err = erc20DeployTx.Sign(ethtypes.LatestSignerForChainID(chainID), krSigner)
 	require.NoError(t, err)
-	rsp, err := s.Network.App.GetEVMKeeper().EthereumTx(ctx, erc20DeployTx)
+	rsp, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.Network.App.GetEVMKeeper(), erc20DeployTx)
 	require.NoError(t, err)
 	require.Empty(t, rsp.VmError)
 	return crypto.CreateAddress(addr, nonce)

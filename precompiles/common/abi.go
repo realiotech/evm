@@ -2,6 +2,7 @@ package common
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -14,6 +15,8 @@ import (
 
 	contractutils "github.com/cosmos/evm/contracts/utils"
 )
+
+const abiWordLength = 32
 
 // MakeTopic converts a filter query argument into a filter topic.
 // NOTE: This was copied from accounts/abi/topics.go
@@ -142,4 +145,193 @@ func LoadABI(fs embed.FS, path string) (abi.ABI, error) {
 	}
 
 	return contract.ABI, nil
+}
+
+// abiWord reads the 32-byte ABI word at pos and returns it as a position
+// within input. It must only be used for offset and length words: values that
+// do not fit or that point outside of the input are rejected, since neither
+// offsets nor lengths of an in-bounds encoding can exceed the encoding itself.
+// Static values (e.g. uint256 amounts) are left to the ABI decoder.
+func abiWord(input []byte, pos int) (int, error) {
+	if pos < 0 || pos+abiWordLength > len(input) {
+		return 0, errors.New("abi: input too short for ABI word")
+	}
+	v := new(big.Int).SetBytes(input[pos : pos+abiWordLength])
+	if !v.IsInt64() || v.Int64() > int64(len(input)) {
+		return 0, errors.New("abi: ABI word exceeds input length")
+	}
+	return int(v.Int64()), nil
+}
+
+// abiTypeIsDynamic reports whether the type is encoded behind an offset head
+// word instead of being placed inline.
+func abiTypeIsDynamic(t abi.Type) bool {
+	switch t.T {
+	case abi.StringTy, abi.BytesTy, abi.SliceTy:
+		return true
+	case abi.ArrayTy:
+		return abiTypeIsDynamic(*t.Elem)
+	case abi.TupleTy:
+		for _, elem := range t.TupleElems {
+			if abiTypeIsDynamic(*elem) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// abiHeadSize returns the number of bytes the type occupies in the head area
+// of its enclosing tuple, array or slice. Dynamic types occupy a single offset
+// word, while static arrays and tuples are placed inline with their full
+// width. This mirrors the ABI decoder's getTypeSize.
+func abiHeadSize(t abi.Type) int {
+	if abiTypeIsDynamic(t) {
+		return abiWordLength
+	}
+	switch t.T {
+	case abi.ArrayTy:
+		return t.Size * abiHeadSize(*t.Elem)
+	case abi.TupleTy:
+		size := 0
+		for _, elem := range t.TupleElems {
+			size += abiHeadSize(*elem)
+		}
+		return size
+	default:
+		return abiWordLength
+	}
+}
+
+// abiCharge adds n bytes to the running decode budget. In a canonical
+// encoding every charged region (head words, inline static values, length
+// words and string/bytes contents) is a disjoint slice of input, so the total
+// can never exceed len(input); once it does, the input contains overlapping
+// offsets aliasing shared data.
+func abiCharge(input []byte, total *int, n int) error {
+	if n < 0 || n > len(input)-*total {
+		return errors.New("abi: cumulative decoded size exceeds encoded input size")
+	}
+	*total += n
+	return nil
+}
+
+// abiElemsCheckSize walks the head area of a tuple (or of the top-level
+// arguments) starting at start, whose fields have the given types. The full
+// head width is charged before descending into any dynamic field, whose
+// offset is relative to start.
+func abiElemsCheckSize(elems []abi.Type, start int, input []byte, total *int) error {
+	headSize := 0
+	for _, elem := range elems {
+		headSize += abiHeadSize(elem)
+	}
+	if err := abiCharge(input, total, headSize); err != nil {
+		return err
+	}
+	fieldStart := start
+	for _, elem := range elems {
+		if abiTypeIsDynamic(elem) {
+			offset, err := abiWord(input, fieldStart)
+			if err != nil {
+				return err
+			}
+			if err := abiValueCheckSize(elem, start+offset, input, total); err != nil {
+				return err
+			}
+		}
+		fieldStart += abiHeadSize(elem)
+	}
+	return nil
+}
+
+// abiArrayCheckSize charges the heads of size elements of type elem starting
+// at start and descends into every dynamic element, whose offset is relative
+// to start. Every element is charged at least one word, as the decoder
+// reserves one word per element.
+func abiArrayCheckSize(elem abi.Type, size, start int, input []byte, total *int) error {
+	elemSize := max(abiHeadSize(elem), abiWordLength)
+	if size > (len(input)-*total)/elemSize {
+		return errors.New("abi: cumulative decoded size exceeds encoded input size")
+	}
+	if err := abiCharge(input, total, size*elemSize); err != nil {
+		return err
+	}
+	if start+size*elemSize > len(input) {
+		return errors.New("abi: array exceeds input length")
+	}
+	if !abiTypeIsDynamic(elem) {
+		// static elements are placed inline and decoded by the ABI decoder
+		return nil
+	}
+	for i := 0; i < size; i++ {
+		offset, err := abiWord(input, start+i*abiWordLength)
+		if err != nil {
+			return err
+		}
+		if err := abiValueCheckSize(elem, start+offset, input, total); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// abiValueCheckSize walks the dynamic value of type t whose encoding starts at
+// start within input and charges every length word, element head and
+// string/bytes content it references to total before descending. Repeated or
+// overlapping offsets are charged once per reference, so an input whose
+// decoded representation (or decoder traversal) would be larger than the
+// encoding is rejected before the decoder materializes it.
+func abiValueCheckSize(t abi.Type, start int, input []byte, total *int) error {
+	switch t.T {
+	case abi.StringTy, abi.BytesTy:
+		length, err := abiWord(input, start)
+		if err != nil {
+			return err
+		}
+		if start+abiWordLength+length > len(input) {
+			return errors.New("abi: dynamic content exceeds input length")
+		}
+		return abiCharge(input, total, abiWordLength+length)
+
+	case abi.SliceTy:
+		size, err := abiWord(input, start)
+		if err != nil {
+			return err
+		}
+		if err := abiCharge(input, total, abiWordLength); err != nil {
+			return err
+		}
+		return abiArrayCheckSize(*t.Elem, size, start+abiWordLength, input, total)
+
+	case abi.ArrayTy:
+		return abiArrayCheckSize(*t.Elem, t.Size, start, input, total)
+
+	case abi.TupleTy:
+		elems := make([]abi.Type, len(t.TupleElems))
+		for i, elem := range t.TupleElems {
+			elems[i] = *elem
+		}
+		return abiElemsCheckSize(elems, start, input, total)
+
+	default:
+		// static types are placed inline and charged by their parent
+		return nil
+	}
+}
+
+// CheckABIInputSize validates that the ABI-encoded arguments do not expand
+// into a decoded representation larger than the encoding itself. The ABI
+// decoder validates each dynamic reference independently and accepts
+// repeated offsets that all point at the same data, materializing it once
+// per reference, so a small encoded input could otherwise unpack into an
+// unbounded amount of retained Go memory that is never charged for.
+func CheckABIInputSize(args abi.Arguments, input []byte) error {
+	total := 0
+	elems := make([]abi.Type, len(args))
+	for i, arg := range args {
+		elems[i] = arg.Type
+	}
+	return abiElemsCheckSize(elems, 0, input, &total)
 }

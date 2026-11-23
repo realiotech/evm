@@ -248,6 +248,23 @@ func (s *IntegrationTestSuite) TestMempoolRemove() {
 	}
 }
 
+// TestMempoolRemoveKeepsSenderNoncesPending tests that removing a still valid EVM
+// transaction leaves it and the sender's later-nonce transactions pending.
+func (s *IntegrationTestSuite) TestMempoolRemoveKeepsSenderNoncesPending() {
+	s.SetupTest()
+	evmMempool := s.network.App.GetMempool()
+	senderKey := s.keyring.GetKey(0)
+	firstTx := s.createEVMValueTransferTx(senderKey, 0, big.NewInt(1000000000))
+	secondTx := s.createEVMValueTransferTx(senderKey, 1, big.NewInt(1000000000))
+
+	s.Require().NoError(evmMempool.Insert(s.network.GetContext(), firstTx))
+	s.Require().NoError(evmMempool.Insert(s.network.GetContext(), secondTx))
+	s.Require().Equal(2, evmMempool.CountTx())
+
+	s.Require().NoError(evmMempool.Remove(firstTx))
+	s.Require().Equal(2, evmMempool.CountTx())
+}
+
 // TestMempoolSelect tests transaction selection from the mempool
 func (s *IntegrationTestSuite) TestMempoolSelect() {
 	testCases := []struct {

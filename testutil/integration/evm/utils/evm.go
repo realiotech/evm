@@ -10,8 +10,25 @@ import (
 
 	"github.com/cosmos/evm/contracts"
 	"github.com/cosmos/evm/testutil/integration/evm/network"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
+
+// ExecuteAnteVerifiedEthereumTx runs the given message through the
+// MsgEthereumTx handler as if the EVM ante handler had verified and charged it
+// for its From address, and returns the handler's response.
+func ExecuteAnteVerifiedEthereumTx(
+	ctx sdk.Context,
+	evmKeeper *evmkeeper.Keeper,
+	ethereumTxMsg *evmtypes.MsgEthereumTx,
+) (*evmtypes.MsgEthereumTxResponse, error) {
+	verifiedSender := common.BytesToAddress(ethereumTxMsg.From)
+	evmKeeper.SetAnteVerifiedSender(ctx, ethereumTxMsg.Hash(), verifiedSender)
+
+	return evmKeeper.EthereumTx(ctx, ethereumTxMsg)
+}
 
 // GetERC20Balance returns the token balance of a given account address for
 // an ERC-20 token at the given contract address.

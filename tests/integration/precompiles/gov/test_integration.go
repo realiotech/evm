@@ -696,6 +696,13 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 					Expect(out.TallyResult.Abstain).To(Equal("0"))
 					Expect(out.TallyResult.No).To(Equal("0"))
 					Expect(out.TallyResult.NoWithVeto).To(Equal("0"))
+
+					// The signed tally query must not delete the proposal's
+					// stored votes once its block is committed.
+					Expect(s.network.NextBlock()).To(BeNil())
+					votesRes, err := s.network.GetGovClient().Votes(s.network.GetContext(), &govv1.QueryVotesRequest{ProposalId: proposalID})
+					Expect(err).To(BeNil())
+					Expect(votesRes.Votes).To(HaveLen(1))
 				})
 			})
 
@@ -1344,7 +1351,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 
 				// 2. Deposit to gov prop from contract 2
 				txArgs.To = &contractAddrDupe
-				txArgs.GasLimit = 50_000_000
+				txArgs.GasLimit = 16_000_000
 				callArgs.MethodName = testDepositFromContract
 				callArgs.Args = []interface{}{
 					contractProposalID,
@@ -1367,7 +1374,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 				It("should cancel proposal and fund to communityPool", func() {
 					baseDenom := s.network.GetBaseDenom()
 					txArgs.To = &contractAddr
-					txArgs.GasLimit = 50_000_000
+					txArgs.GasLimit = 16_000_000
 					callArgs.MethodName = "testTransferCancelFund"
 					callArgs.Args = []interface{}{
 						contractAddrDupe,
@@ -2160,13 +2167,23 @@ func minimalDeposit(denom string, amount *big.Int) []cmn.Coin {
 // minimalBankSendProposalJSON returns a valid governance proposal encoded as UTF‑8 bytes.
 func minimalBankSendProposalJSON(to sdk.AccAddress, denom, amount string) []byte {
 	// proto‑JSON marshal via std JSON since test helpers don’t expose codec here.
-	// We craft by hand for brevity.
-	msgJSON, _ := json.Marshal(map[string]interface{}{
-		"@type": "/cosmos.bank.v1beta1.MsgSend",
+	// Messages must be in the codec's canonical form, so fields follow the
+	// proto declaration order.
+	type coin struct {
+		Denom  string `json:"denom"`
+		Amount string `json:"amount"`
+	}
+	msgJSON, _ := json.Marshal(struct {
+		Type        string `json:"@type"`
+		FromAddress string `json:"from_address"`
+		ToAddress   string `json:"to_address"`
+		Amount      []coin `json:"amount"`
+	}{
+		Type: "/cosmos.bank.v1beta1.MsgSend",
 		// from_address must be gov module account
-		"from_address": govModuleAddr.String(),
-		"to_address":   to.String(),
-		"amount":       []map[string]string{{"denom": denom, "amount": amount}},
+		FromAddress: govModuleAddr.String(),
+		ToAddress:   to.String(),
+		Amount:      []coin{{Denom: denom, Amount: amount}},
 	})
 
 	prop := map[string]interface{}{

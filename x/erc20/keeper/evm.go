@@ -105,22 +105,36 @@ func (k Keeper) BalanceOf(
 	abi abi.ABI,
 	contract, account common.Address,
 ) *big.Int {
+	balance, _ := k.queryERC20Balance(ctx, abi, contract, account)
+	return balance
+}
+
+// queryERC20Balance queries an account's balance for a given ERC20 contract and
+// returns the error of a failed query.
+func (k Keeper) queryERC20Balance(
+	ctx sdk.Context,
+	abi abi.ABI,
+	contract, account common.Address,
+) (*big.Int, error) {
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
 	// Okay to assume we're not calling from a precompile, as queries will just revert state changes.
 	res, err := k.evmKeeper.CallEVM(ctx, stateDB, abi, types.ModuleAddress, contract, false, false, nil, "balanceOf", account)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	unpacked, err := abi.Unpack("balanceOf", res.Ret)
-	if err != nil || len(unpacked) == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if len(unpacked) == 0 {
+		return nil, errorsmod.Wrap(types.ErrABIUnpack, "empty balanceOf response")
 	}
 
 	balance, ok := unpacked[0].(*big.Int)
 	if !ok {
-		return nil
+		return nil, errorsmod.Wrap(types.ErrABIUnpack, "invalid balanceOf response")
 	}
 
-	return balance
+	return balance, nil
 }
