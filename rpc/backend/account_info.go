@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/big"
@@ -41,8 +42,16 @@ func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNu
 	return res.Code, nil
 }
 
+// maxGetProofKeys is the maximum number of storage keys that can be
+// requested in a single eth_getProof call. Mirrors go-ethereum's cap.
+const maxGetProofKeys = 1024
+
 // GetProof returns an account object with proof and any storage proofs
-func (b *Backend) GetProof(address common.Address, storageKeys []string, blockNrOrHash rpctypes.BlockNumberOrHash) (*rpctypes.AccountResult, error) {
+func (b *Backend) GetProof(ctx context.Context, address common.Address, storageKeys []string, blockNrOrHash rpctypes.BlockNumberOrHash) (*rpctypes.AccountResult, error) {
+	if len(storageKeys) > maxGetProofKeys {
+		return nil, fmt.Errorf("too many storage keys requested (max %d, got %d)", maxGetProofKeys, len(storageKeys))
+	}
+
 	blockNum, err := b.BlockNumberFromComet(blockNrOrHash)
 	if err != nil {
 		return nil, err
@@ -70,13 +79,17 @@ func (b *Backend) GetProof(address common.Address, storageKeys []string, blockNr
 		height = int64(bn) //#nosec G115 -- checked for int overflow already
 	}
 
-	ctx := rpctypes.ContextWithHeight(height)
+	queryCtx := rpctypes.ContextWithHeight(height)
 	clientCtx := b.ClientCtx.WithHeight(height)
 
 	// query storage proofs
 	storageProofs := make([]rpctypes.StorageResult, len(storageKeys))
 
 	for i, key := range storageKeys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		hexKey := common.HexToHash(key)
 		valueBz, proof, err := b.QueryClient.GetProof(clientCtx, evmtypes.StoreKey, evmtypes.StateKey(address, hexKey.Bytes()))
 		if err != nil {
@@ -95,7 +108,7 @@ func (b *Backend) GetProof(address common.Address, storageKeys []string, blockNr
 		Address: address.String(),
 	}
 
-	res, err := b.QueryClient.Account(ctx, req)
+	res, err := b.QueryClient.Account(queryCtx, req)
 	if err != nil {
 		return nil, err
 	}

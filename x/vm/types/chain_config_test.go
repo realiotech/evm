@@ -353,3 +353,8 @@ func TestChainConfigValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultChainConfigEnablesOsaka(t *testing.T) {
+	cfg := types.DefaultChainConfig(0).EthereumConfig(nil)
+	require.True(t, cfg.IsOsaka(cfg.LondonBlock, 0))
+}

@@ -1,6 +1,7 @@
 package statedb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -165,4 +166,36 @@ func TestAddPrecompileFn_CounterDoesNotWrap(t *testing.T) {
 	db2.RevertToSnapshot(snap)
 	require.Error(t, db2.AddPrecompileFn(mockSnap2.Snapshot()),
 		"a reverted call must still consume quota")
+}
+
+// TestAddPrecompileFn_LimitsSharedByNestedStateDBs verifies that a StateDB
+// created from the context of another StateDB shares its precompile call
+// limit.
+func TestAddPrecompileFn_LimitsSharedByNestedStateDBs(t *testing.T) {
+	newNested := func(ctx sdk.Context) *StateDB {
+		db := New(ctx, nil, NewEmptyTxConfig())
+		db.snapshotter = newMockSnapshotter()
+		db.cacheCtx = db.ctx
+		db.writeCache = func() {}
+		return db
+	}
+
+	ctx := sdk.Context{}.WithContext(context.Background()).WithEventManager(sdk.NewEventManager())
+	dbs := []*StateDB{newNested(ctx)}
+	for i := 0; i < 3; i++ {
+		dbs = append(dbs, newNested(dbs[len(dbs)-1].cacheCtx))
+	}
+
+	// The top-level StateDB and the nested ones share a single call limit.
+	for i := uint64(0); i < types.MaxPrecompileCalls; i++ {
+		db := dbs[i%uint64(len(dbs))]
+		require.NoError(t, db.AddPrecompileFn(db.MultiStoreSnapshot()), "call %d should be accepted", i)
+	}
+	for _, db := range dbs {
+		require.ErrorContains(t, db.AddPrecompileFn(db.MultiStoreSnapshot()), "max calls to precompiles")
+	}
+
+	// A StateDB created from a context without a scope gets its own limit.
+	fresh := newNested(ctx)
+	require.NoError(t, fresh.AddPrecompileFn(fresh.MultiStoreSnapshot()))
 }

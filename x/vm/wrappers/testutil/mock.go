@@ -95,6 +95,20 @@ func (mr *MockAccountKeeperMockRecorder) GetModuleAddress(moduleName any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetModuleAddress", reflect.TypeOf((*MockAccountKeeper)(nil).GetModuleAddress), moduleName)
 }
 
+// GetModulePermissions mocks base method.
+func (m *MockAccountKeeper) GetModulePermissions() map[string]types0.PermissionsForAddress {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetModulePermissions")
+	ret0, _ := ret[0].(map[string]types0.PermissionsForAddress)
+	return ret0
+}
+
+// GetModulePermissions indicates an expected call of GetModulePermissions.
+func (mr *MockAccountKeeperMockRecorder) GetModulePermissions() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetModulePermissions", reflect.TypeOf((*MockAccountKeeper)(nil).GetModulePermissions))
+}
+
 // GetParams mocks base method.
 func (m *MockAccountKeeper) GetParams(ctx context.Context) types0.Params {
 	m.ctrl.T.Helper()

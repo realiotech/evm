@@ -1,9 +1,11 @@
 package keeper
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/hashicorp/go-metrics"
 
 	"github.com/cosmos/evm/ibc"
@@ -13,12 +15,23 @@ import (
 	"github.com/cosmos/ibc-go/v10/modules/core/exported"
 
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 )
+
+// maxRefundConversionGas caps the gas the reconversion of refunded coins may use.
+// A reverted EVM call uses up its whole meter, so this is also what a failed
+// conversion costs the relayer. It leaves room for a proxied token such as USDC,
+// whose reconversion was measured at about 560,000 gas.
+const maxRefundConversionGas uint64 = 1_000_000
+
+// refundConversionGasDescriptor names the reconversion of refunded coins in gas
+// charges and out-of-gas errors.
+const refundConversionGasDescriptor = "convert coin to erc20 from packet"
 
 // OnRecvPacket performs the ICS20 middleware receive callback for automatically
 // converting an IBC Coin to their ERC20 representation.
@@ -233,8 +246,19 @@ func (k Keeper) ConvertCoinToERC20FromPacket(ctx sdk.Context, data transfertypes
 			return nil
 		}
 
-		// Convert from Coin to ERC20
-		if err := k.ConvertCoinNativeERC20(ctx, pair, coin.Amount, common.BytesToAddress(sender), sender, false); err != nil {
+		conversionGasBudget := min(ctx.GasMeter().GasRemaining(), maxRefundConversionGas)
+		transactionCannotFundFullBudget := conversionGasBudget < maxRefundConversionGas
+
+		starvedOfGas, err := k.attemptRefundConversion(ctx, conversionGasBudget, pair, coin.Amount, sender)
+
+		// The relayer sent too little gas, so the transaction fails and can be retried.
+		if starvedOfGas && transactionCannotFundFullBudget {
+			panic(storetypes.ErrorOutOfGas{Descriptor: refundConversionGasDescriptor})
+		}
+
+		// The token failed on a full budget or for a reason other than gas, so the
+		// sender keeps the refunded coins.
+		if err != nil {
 			// We want to record only the failed attempt to reconvert the coins during IBC.
 			defer func() {
 				telemetry.IncrCounter(1, types.ModuleName, "ibc", "error", "total")
@@ -254,4 +278,61 @@ func (k Keeper) ConvertCoinToERC20FromPacket(ctx sdk.Context, data transfertypes
 	}
 
 	return nil
+}
+
+// attemptRefundConversion tries to convert refunded coins to their ERC20, keeping
+// no state change of a failed attempt. It returns the conversion error and whether
+// that failure was for lack of gas.
+func (k Keeper) attemptRefundConversion(
+	ctx sdk.Context,
+	conversionGasBudget uint64,
+	tokenPair types.TokenPair,
+	refundAmount math.Int,
+	refundedAccount sdk.AccAddress,
+) (starvedOfGas bool, err error) {
+	// The conversion runs on a branch of state that is committed only on success.
+	// A reverted EVM call uses up its meter's whole limit, so the conversion
+	// cannot share the transaction's meter.
+	conversionGasMeter := storetypes.NewGasMeter(conversionGasBudget)
+	branchCtx, commitBranch := ctx.WithGasMeter(conversionGasMeter).CacheContext()
+
+	// The transaction pays for the attempt whether or not it succeeds. This is
+	// registered first so it runs last, after the recover below, on every path.
+	defer func() {
+		ctx.GasMeter().ConsumeGas(conversionGasMeter.GasConsumedToLimit(), refundConversionGasDescriptor)
+	}()
+
+	defer func() {
+		recoveredPanic := recover()
+		if recoveredPanic == nil {
+			return
+		}
+
+		// Only the conversion meter running out is a failed conversion.
+		outOfGasPanic, isOutOfGasPanic := recoveredPanic.(storetypes.ErrorOutOfGas)
+		if !isOutOfGasPanic || !conversionGasMeter.IsOutOfGas() {
+			panic(recoveredPanic)
+		}
+
+		starvedOfGas = true
+		err = errorsmod.Wrapf(errortypes.ErrOutOfGas, "out of gas in location: %s", outOfGasPanic.Descriptor)
+	}()
+
+	refundedAddress := common.BytesToAddress(refundedAccount)
+
+	if err = k.ConvertCoinNativeERC20(branchCtx, tokenPair, refundAmount, refundedAddress, refundedAccount, false); err != nil {
+		// A refused EVM call returns before using any gas, so the meter alone
+		// does not show that it was short of gas.
+		return conversionGasMeter.IsOutOfGas() || evmCallRefusedForGas(err), err
+	}
+
+	commitBranch()
+
+	return false, nil
+}
+
+// evmCallRefusedForGas reports whether the EVM refused to start a call because
+// its gas limit was below the call's intrinsic or floor data gas.
+func evmCallRefusedForGas(err error) bool {
+	return errors.Is(err, core.ErrIntrinsicGas) || errors.Is(err, core.ErrFloorDataGas)
 }

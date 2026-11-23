@@ -440,6 +440,16 @@ func (s *PrecompileTestSuite) TestGetTallyResult() {
 
 				s.Require().NoError(err)
 				s.Require().Equal(expTally, out.TallyResult)
+
+				// Regression check: the tally query must not delete the
+				// proposal's stored votes.
+				votesMethod := s.precompile.Methods[gov.GetVotesMethod]
+				votesBz, err := s.precompile.GetVotes(ctx, &votesMethod, contract, []interface{}{propID, query.PageRequest{}})
+				s.Require().NoError(err)
+				var votesOut gov.VotesOutput
+				err = s.precompile.UnpackIntoInterface(&votesOut, gov.GetVotesMethod, votesBz)
+				s.Require().NoError(err)
+				s.Require().Len(votesOut.Votes, 1)
 			} else {
 				s.Require().Error(err)
 				s.Require().Contains(err.Error(), tc.errContains)

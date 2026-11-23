@@ -4,6 +4,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/core/vm"
 
+	vmstoretypes "github.com/cosmos/evm/x/vm/store/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
@@ -136,7 +138,18 @@ func (p *Precompile) GetTallyResult(
 		return nil, err
 	}
 
-	res, err := p.govQuerier.TallyResult(ctx, queryTallyResultReq)
+	// The SDK gov query server's TallyResult finalizes active proposals by
+	// deleting their votes after computing the tally, so this method must not
+	// run on the caller's store directly.
+	queryCtx := ctx
+	if sms, ok := ctx.MultiStore().(vmstoretypes.SnapshotMultiStore); ok {
+		snapshot := sms.Snapshot()
+		defer sms.RevertToSnapshot(snapshot)
+	} else {
+		queryCtx, _ = ctx.CacheContext()
+	}
+
+	res, err := p.govQuerier.TallyResult(queryCtx, queryTallyResultReq)
 	if err != nil {
 		return nil, err
 	}

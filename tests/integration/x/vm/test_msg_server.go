@@ -3,6 +3,7 @@ package vm
 import (
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/holiman/uint256"
 
@@ -12,6 +13,7 @@ import (
 	sdkmath "cosmossdk.io/math"
 
 	sdktypes "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 )
@@ -133,7 +135,7 @@ func (s *KeeperTestSuite) TestEthereumTx() {
 			msg := tc.getMsg()
 
 			// Function to be tested
-			res, err := s.Network.App.GetEVMKeeper().EthereumTx(s.Network.GetContext(), msg)
+			res, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.Network.App.GetEVMKeeper(), msg)
 
 			events := s.Network.GetContext().EventManager().Events()
 			if tc.expectedErr != nil {
@@ -159,6 +161,118 @@ func (s *KeeperTestSuite) TestEthereumTx() {
 		})
 	}
 	s.EnableFeemarket = false
+}
+
+// TestEthereumTxRequiresAnteVerifiedSender checks that the MsgEthereumTx
+// handler rejects, without moving funds, a message the EVM ante handler did not
+// record for the same sender in the same tx.
+func (s *KeeperTestSuite) TestEthereumTxRequiresAnteVerifiedSender() {
+	anteCosmosTxBytes := []byte("cosmos tx the ante handler verified")
+	laterCosmosTxBytes := []byte("later cosmos tx of the block")
+
+	rawSignerAddress := s.Keyring.GetAddr(0)
+	recipientAddress := s.Keyring.GetAddr(1)
+	unrelatedAddress := common.HexToAddress("0x00000000000000000000000000000000000BEEF1")
+
+	testCases := []struct {
+		name string
+		// arrange prepares the context the handler is called with and may
+		// change the message it is called with.
+		arrange     func(ctx sdktypes.Context, transferMsg *types.MsgEthereumTx) sdktypes.Context
+		expectedErr error
+	}{
+		{
+			name: "fail - ante handler did not run for the message",
+			arrange: func(ctx sdktypes.Context, _ *types.MsgEthereumTx) sdktypes.Context {
+				return ctx
+			},
+			expectedErr: sdkerrors.ErrUnauthorized,
+		},
+		{
+			name: "fail - from differs from the sender the ante handler verified",
+			arrange: func(ctx sdktypes.Context, transferMsg *types.MsgEthereumTx) sdktypes.Context {
+				s.Network.App.GetEVMKeeper().SetAnteVerifiedSender(ctx, transferMsg.Hash(), rawSignerAddress)
+
+				transferMsg.From = unrelatedAddress.Bytes()
+
+				return ctx
+			},
+			expectedErr: sdkerrors.ErrorInvalidSigner,
+		},
+		{
+			name: "fail - from is longer than an ethereum address",
+			arrange: func(ctx sdktypes.Context, transferMsg *types.MsgEthereumTx) sdktypes.Context {
+				s.Network.App.GetEVMKeeper().SetAnteVerifiedSender(ctx, transferMsg.Hash(), rawSignerAddress)
+
+				transferMsg.From = append(make([]byte, 12), rawSignerAddress.Bytes()...)
+
+				return ctx
+			},
+			expectedErr: sdkerrors.ErrorInvalidSigner,
+		},
+		{
+			name: "fail - ante handler verified the message in an earlier tx of the block",
+			arrange: func(ctx sdktypes.Context, transferMsg *types.MsgEthereumTx) sdktypes.Context {
+				s.Network.App.GetEVMKeeper().SetAnteVerifiedSender(ctx, transferMsg.Hash(), rawSignerAddress)
+
+				return ctx.WithTxBytes(laterCosmosTxBytes)
+			},
+			expectedErr: sdkerrors.ErrUnauthorized,
+		},
+		{
+			name: "fail - message was already executed once",
+			arrange: func(ctx sdktypes.Context, transferMsg *types.MsgEthereumTx) sdktypes.Context {
+				firstResponse, err := utils.ExecuteAnteVerifiedEthereumTx(ctx, s.Network.App.GetEVMKeeper(), transferMsg)
+				s.Require().NoError(err)
+				s.Require().False(firstResponse.Failed())
+
+				return ctx
+			},
+			expectedErr: sdkerrors.ErrUnauthorized,
+		},
+	}
+
+	for _, testCase := range testCases {
+		s.Run(testCase.name, func() {
+			s.SetupTest()
+
+			evmKeeper := s.Network.App.GetEVMKeeper()
+			bankKeeper := s.Network.App.GetBankKeeper()
+			evmDenom := types.GetEVMCoinDenom()
+
+			// The handler refunds unused gas out of the fee collector's balance.
+			anteCtx := s.Network.GetContext().WithTxBytes(anteCosmosTxBytes)
+			refundableFees := sdktypes.NewCoins(sdktypes.NewCoin(evmDenom, sdkmath.NewInt(1e18)))
+			err := bankKeeper.MintCoins(anteCtx, "mint", refundableFees)
+			s.Require().NoError(err)
+
+			err = bankKeeper.SendCoinsFromModuleToModule(anteCtx, "mint", authtypes.FeeCollectorName, refundableFees)
+			s.Require().NoError(err)
+
+			transferArgs := types.EvmTxArgs{
+				To:       &recipientAddress,
+				Amount:   big.NewInt(1e18),
+				GasLimit: 1_000_000,
+			}
+			transferMsg, err := s.Factory.GenerateSignedMsgEthereumTx(s.Keyring.GetPrivKey(0), transferArgs)
+			s.Require().NoError(err)
+
+			handlerCtx := testCase.arrange(anteCtx, &transferMsg)
+
+			signerBalanceBefore := bankKeeper.GetBalance(handlerCtx, rawSignerAddress.Bytes(), evmDenom)
+			recipientBalanceBefore := bankKeeper.GetBalance(handlerCtx, recipientAddress.Bytes(), evmDenom)
+
+			response, err := evmKeeper.EthereumTx(handlerCtx, &transferMsg)
+
+			s.Require().ErrorIs(err, testCase.expectedErr)
+			s.Require().Nil(response)
+
+			signerBalanceAfter := bankKeeper.GetBalance(handlerCtx, rawSignerAddress.Bytes(), evmDenom)
+			recipientBalanceAfter := bankKeeper.GetBalance(handlerCtx, recipientAddress.Bytes(), evmDenom)
+			s.Require().Equal(signerBalanceBefore, signerBalanceAfter, "a rejected message must not refund or charge the raw signer")
+			s.Require().Equal(recipientBalanceBefore, recipientBalanceAfter, "a rejected message must not transfer value")
+		})
+	}
 }
 
 func (s *KeeperTestSuite) TestUpdateParams() {

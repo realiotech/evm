@@ -1,6 +1,7 @@
 package evm
 
 import (
+	"bytes"
 	"errors"
 	"math/big"
 
@@ -8,10 +9,12 @@ import (
 
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+	"github.com/cosmos/gogoproto/proto"
 
 	errorsmod "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
 
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdktypes "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/types/tx"
@@ -53,6 +56,57 @@ func checkDisabledCreateCall(
 	return nil
 }
 
+// ValidateTxEncoding rejects an Ethereum tx whose encoded bytes differ from the
+// Cosmos envelope that BuildTx produces for its signed message.
+func ValidateTxEncoding(ethMsg *evmtypes.MsgEthereumTx, txBytes []byte) error {
+	signedEnvelopeBytes, err := encodeSignedEnvelope(ethMsg)
+	if err != nil {
+		return errorsmod.Wrap(err, "failed to encode the signed tx envelope")
+	}
+
+	if !bytes.Equal(txBytes, signedEnvelopeBytes) {
+		return errorsmod.Wrap(errortypes.ErrInvalidRequest, "ethereum tx envelope is not canonically encoded")
+	}
+
+	return nil
+}
+
+// encodeSignedEnvelope returns the encoding of the Cosmos tx that carries ethMsg
+// with every field derived from the signed message.
+func encodeSignedEnvelope(ethMsg *evmtypes.MsgEthereumTx) ([]byte, error) {
+	// The message keeps only the sender and the signed raw transaction.
+	strippedMsgAny, err := codectypes.NewAnyWithValue(&evmtypes.MsgEthereumTx{From: ethMsg.From, Raw: ethMsg.Raw})
+	if err != nil {
+		return nil, err
+	}
+	extensionOptionAny, err := codectypes.NewAnyWithValue(&evmtypes.ExtensionOptionsEthereumTx{})
+	if err != nil {
+		return nil, err
+	}
+
+	// No coin can carry a fee wider than an sdkmath.Int, and NewIntFromBigInt
+	// panics on one, so such a tx cannot have a valid envelope.
+	signedFee := ethMsg.GetFee()
+	if signedFee.BitLen() > sdkmath.MaxBitLen {
+		return nil, errorsmod.Wrapf(errortypes.ErrInvalidRequest, "signed fee %s exceeds the maximum coin amount", signedFee)
+	}
+
+	// NewCoins drops a zero fee, as BuildTx sets no fee coin for a zero fee.
+	signedFeeAmount := sdkmath.NewIntFromBigInt(signedFee)
+	signedFeeCoins := sdktypes.NewCoins(sdktypes.NewCoin(evmtypes.GetEVMCoinExtendedDenom(), signedFeeAmount))
+
+	signedEnvelope := &tx.Tx{
+		Body: &tx.TxBody{
+			Messages:         []*codectypes.Any{strippedMsgAny},
+			ExtensionOptions: []*codectypes.Any{extensionOptionAny},
+		},
+		AuthInfo: &tx.AuthInfo{
+			Fee: &tx.Fee{Amount: signedFeeCoins, GasLimit: ethMsg.GetGas()},
+		},
+	}
+	return proto.Marshal(signedEnvelope)
+}
+
 // ValidateTx validates an Ethereum specific transaction type and returns an error if invalid.
 //
 // FIXME: this shouldn't be required if the tx was an Ethereum transaction type.
@@ -92,6 +146,10 @@ func ValidateTx(tx sdktypes.Tx) (*tx.Fee, error) {
 		return nil, errorsmod.Wrap(errortypes.ErrInvalidRequest, "for eth tx AuthInfo Fee payer and granter should be empty")
 	}
 
+	if authInfo.Tip != nil {
+		return nil, errorsmod.Wrap(errortypes.ErrInvalidRequest, "authInfo.Tip must be nil")
+	}
+
 	sigs := protoTx.Signatures
 	if len(sigs) > 0 {
 		return nil, errorsmod.Wrap(errortypes.ErrInvalidRequest, "for eth tx Signatures should be empty")
@@ -114,8 +172,9 @@ func CheckTxFee(txFeeInfo *tx.Fee, txFee *big.Int, txGasLimit uint64) error {
 	// BuildTx then converts uatom to aatom meaning that logic that interacts with the user
 	// will use uatom and internal processing such as the ante handler will operate based on aatom.
 	evmExtendedDenom := evmtypes.GetEVMCoinExtendedDenom()
-	if !txFeeInfo.Amount.AmountOf(evmExtendedDenom).Equal(sdkmath.NewIntFromBigInt(txFee)) {
-		return errorsmod.Wrapf(errortypes.ErrInvalidRequest, "invalid AuthInfo Fee Amount (%s != %s)", txFeeInfo.Amount, txFee)
+	expectedFee := sdktypes.NewCoins(sdktypes.NewCoin(evmExtendedDenom, sdkmath.NewIntFromBigInt(txFee)))
+	if !txFeeInfo.Amount.Equal(expectedFee) {
+		return errorsmod.Wrapf(errortypes.ErrInvalidRequest, "invalid AuthInfo Fee Amount (%s != %s)", txFeeInfo.Amount, expectedFee)
 	}
 
 	if txFeeInfo.GasLimit != txGasLimit {

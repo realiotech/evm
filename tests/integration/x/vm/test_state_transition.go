@@ -1,15 +1,21 @@
 package vm
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 
@@ -911,6 +917,34 @@ func (s *KeeperTestSuite) TestApplyMessageChargesGasOnCommitError() {
 	s.Require().GreaterOrEqual(gasMeter.GasConsumed()-gasBefore, sdkGasConsumed+res.GasUsed)
 }
 
+func (s *KeeperTestSuite) TestApplyMessageInternalCallIgnoresRefundCounter() {
+	s.SetupTest()
+
+	sender := s.Keyring.GetKey(0)
+	recipient := s.Keyring.GetAddr(1)
+	transferArgs := types.EvmTxArgs{
+		To:     &recipient,
+		Amount: big.NewInt(100),
+	}
+	coreMsg, err := s.Factory.GenerateGethCoreMsg(sender.Priv, transferArgs)
+	s.Require().NoError(err)
+
+	stateDB := statedb.New(s.Network.GetContext(), s.Network.App.GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	// Simulate a stale refund left in the shared StateDB by a previous
+	// internal EVM call (e.g. a contract that cleared preinitialized storage).
+	stateDB.AddRefund(4800)
+
+	res, err := s.Network.App.GetEVMKeeper().ApplyMessage(s.Network.GetContext(), stateDB, *coreMsg, nil, true, false, true)
+	s.Require().NoError(err)
+	s.Require().False(res.Failed())
+	// The internal call performs a plain transfer, which earns no refund, so it
+	// must be charged the full transfer gas without any discount from the
+	// stale refund counter. The refund stays in the StateDB for the outer
+	// transaction's final accounting.
+	s.Require().Equal(params.TxGas, res.GasUsed)
+	s.Require().Equal(uint64(4800), stateDB.GetRefund())
+}
+
 func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 	s.EnableFeemarket = true
 	defer func() { s.EnableFeemarket = false }()
@@ -927,6 +961,66 @@ func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 		},
 	}
 
+	word := func(n int64) []byte { return common.LeftPadBytes(big.NewInt(n).Bytes(), 32) }
+	intrinsicGas := func(input []byte) uint64 {
+		gas, err := core.IntrinsicGas(input, nil, nil, false, true, true, true)
+		s.Require().NoError(err)
+		return gas
+	}
+	callMsg := func(to common.Address, input []byte, gas uint64) core.Message {
+		msg, err := s.Factory.GenerateGethCoreMsg(s.Keyring.GetPrivKey(0), types.EvmTxArgs{To: &to, Input: input, GasLimit: gas})
+		s.Require().NoError(err)
+		return *msg
+	}
+
+	modexpAddr := common.BytesToAddress([]byte{0x05})
+	// 3^(2^256-1) mod 7 with 32 byte operands.
+	modexpInput := slices.Concat(word(32), word(32), word(32), word(3), common.MaxHash.Bytes(), word(7))
+	// EIP-7883: 16 (multiplication complexity) * 255 (iterations), without the EIP-2565 division by 3.
+	modexpGas := intrinsicGas(modexpInput) + 4080
+
+	p256Addr := common.BytesToAddress([]byte{0x01, 0x00})
+	p256Key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s.Require().NoError(err)
+	p256Hash := sha256.Sum256([]byte("hello world"))
+	sigR, sigS, err := ecdsa.Sign(rand.Reader, p256Key, p256Hash[:])
+	s.Require().NoError(err)
+	p256Pub, err := p256Key.PublicKey.ECDH()
+	s.Require().NoError(err)
+	p256Input := make([]byte, 160)
+	copy(p256Input, p256Hash[:])
+	sigR.FillBytes(p256Input[32:64])
+	sigS.FillBytes(p256Input[64:96])
+	copy(p256Input[96:], p256Pub.Bytes()[1:]) // 0x04 || X || Y
+	p256Valid := word(1)
+	p256CallGas := func(input []byte) uint64 { return intrinsicGas(input) + params.P256VerifyGas }
+	p256Gas := p256CallGas(p256Input)
+	p256InvalidSig := slices.Clone(p256Input)
+	p256InvalidSig[0] ^= 0xff
+	p256InvalidLen := p256Input[:len(p256Input)-1]
+
+	// Execution gas of the forwarder contract, excluding the P256VERIFY cost.
+	const p256ForwarderGas = 357
+	// p256ForwarderMsg deploys a contract that calls SHA256 and then forwards its calldata to
+	// P256VERIFY, and returns a message calling it.
+	p256ForwarderMsg := func() core.Message {
+		sender := s.Keyring.GetKey(0)
+		acc, err := s.Handler.GetEvmAccount(sender.Addr)
+		s.Require().NoError(err)
+		_, err = s.Factory.ExecuteEthTx(sender.Priv, types.EvmTxArgs{
+			Input: common.FromHex("602a80600b6000396000f3" + // deploy the 42 byte runtime below
+				"600060006000600060025afa50" + // staticcall(gas, 0x02, 0, 0, 0, 0)
+				"366000600037" + // calldatacopy(0, 0, calldatasize)
+				"600060003660006101005afa50" + // staticcall(gas, 0x100, 0, calldatasize, 0, 0)
+				"3d600060003e3d6000f3"), // return returndata
+			GasLimit: 200_000,
+		})
+		s.Require().NoError(err)
+		s.Require().NoError(s.Network.NextBlock())
+		// The extra gas covers the 1/64th withheld from the P256VERIFY call.
+		return callMsg(crypto.CreateAddress(sender.Addr, acc.Nonce), p256Input, p256Gas+p256ForwarderGas+1000)
+	}
+
 	testCases := []struct {
 		name               string
 		getMessage         func() core.Message
@@ -937,6 +1031,7 @@ func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 		expErr             bool
 		expVMErr           bool
 		expectedGasUsed    uint64
+		expRet             []byte
 		postCheck          func()
 	}{
 		{
@@ -1101,6 +1196,70 @@ func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 			expectedGasUsed:    params.TxGas,
 		},
 		{
+			name:               "success - MODEXP charges EIP-7883 gas",
+			getMessage:         func() core.Message { return callMsg(modexpAddr, modexpInput, modexpGas) },
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    modexpGas,
+			expRet:             word(6),
+		},
+		{
+			name: "fail - MODEXP operand exceeds the EIP-7823 bound of 1024 bytes",
+			getMessage: func() core.Message {
+				return callMsg(modexpAddr, slices.Concat(word(1025), word(1), word(1), make([]byte, 1027)), 200_000)
+			},
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expVMErr:           true,
+		},
+		{
+			name:               "success - P256VERIFY charges EIP-7951 gas",
+			getMessage:         func() core.Message { return callMsg(p256Addr, p256Input, p256Gas) },
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    p256Gas,
+			expRet:             p256Valid,
+		},
+		{
+			name: "success - P256VERIFY returns no data for an invalid signature",
+			getMessage: func() core.Message {
+				return callMsg(p256Addr, p256InvalidSig, p256CallGas(p256InvalidSig))
+			},
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    p256CallGas(p256InvalidSig),
+		},
+		{
+			name: "success - P256VERIFY returns no data for an invalid input length",
+			getMessage: func() core.Message {
+				return callMsg(p256Addr, p256InvalidLen, p256CallGas(p256InvalidLen))
+			},
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    p256CallGas(p256InvalidLen),
+		},
+		{
+			name:               "success - P256VERIFY after a call to another precompile",
+			getMessage:         p256ForwarderMsg,
+			getEVMParams:       types.DefaultParams,
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    p256Gas + p256ForwarderGas,
+			expRet:             p256Valid,
+		},
+		{
+			// Chains that activated the removed RIP-7212 precompile still list its address in their params.
+			name:       "success - P256VERIFY listed in the active static precompiles",
+			getMessage: p256ForwarderMsg,
+			getEVMParams: func() types.Params {
+				params := types.DefaultParams()
+				params.ActiveStaticPrecompiles = []string{p256Addr.Hex()}
+				return params
+			},
+			getFeeMarketParams: feemarkettypes.DefaultParams,
+			expectedGasUsed:    p256Gas + p256ForwarderGas,
+			expRet:             p256Valid,
+		},
+		{
 			name: "call contract tx with config param EnableCall = false",
 			getMessage: func() core.Message {
 				sender := s.Keyring.GetKey(0)
@@ -1246,6 +1405,7 @@ func (s *KeeperTestSuite) TestApplyMessageWithConfig() {
 				s.Require().NoError(err)
 				s.Require().False(res.Failed())
 				s.Require().Equal(tc.expectedGasUsed, res.GasUsed)
+				s.Require().Equal(hexutil.Encode(tc.expRet), hexutil.Encode(res.Ret))
 
 				if tc.postCheck != nil {
 					tc.postCheck()

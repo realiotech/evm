@@ -1,9 +1,13 @@
 package keeper
 
 import (
+	"errors"
+	gomath "math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/vm"
 
 	"github.com/cosmos/evm/contracts"
 	"github.com/cosmos/evm/ibc"
@@ -186,20 +190,29 @@ func (k ContractKeeper) IBCReceivePacketCallback(
 
 	erc20 := contracts.ERC20MinterBurnerDecimalsContract
 
+	// Snapshot the receiver's balance of the packet token before the callback runs.
+	// The incoming packet amount has already been credited to the receiver at this
+	// point, so this is the pre-existing balance plus the packet amount. It is used
+	// below to require the callback to consume at least the packet amount.
+	// NOTE: use the original ctx for the balance read, it is a state read only.
+	entryBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex)
+
 	remainingGas := math.NewIntFromUint64(cachedCtx.GasMeter().GasRemaining()).BigInt()
 
 	// Call the EVM with the remaining gas as the maximum gas limit.
 	// Up to now, the remaining gas is equal to the callback gas limit set by the user.
 	// NOTE: use the cached ctx for the EVM calls.
+	gasBefore := cachedCtx.GasMeter().GasConsumed()
 	res, err := k.evmKeeper.CallEVM(cachedCtx, stateDB, erc20.ABI, receiverHex, tokenPair.GetERC20Contract(), true, false, remainingGas, "approve", contractAddr, amountInt.BigInt())
 	if err != nil {
+		consumeFailedCallGas(ctx, cachedCtx, gasBefore, res, err, "callback allowance")
 		return errorsmod.Wrapf(types.ErrAllowanceFailed, "failed to set allowance: %v", err)
 	}
 
 	// Consume the actual used gas on the original callback context.
 	ctx.GasMeter().ConsumeGas(res.GasUsed, "callback allowance")
 	remainingGas = remainingGas.Sub(remainingGas, math.NewIntFromUint64(res.GasUsed).BigInt())
-	if ctx.GasMeter().IsOutOfGas() || remainingGas.Cmp(big.NewInt(0)) < 0 {
+	if ctx.GasMeter().IsPastLimit() || remainingGas.Cmp(big.NewInt(0)) < 0 {
 		return errorsmod.Wrapf(types.ErrOutOfGas, "out of gas")
 	}
 
@@ -214,30 +227,43 @@ func (k ContractKeeper) IBCReceivePacketCallback(
 	}
 
 	// NOTE: use the cached ctx for the EVM calls.
+	gasBefore = cachedCtx.GasMeter().GasConsumed()
 	res, err = k.evmKeeper.CallEVMWithData(cachedCtx, stateDB, receiverHex, &contractAddr, cbData.Calldata, true, false, remainingGas)
 	if err != nil {
+		consumeFailedCallGas(ctx, cachedCtx, gasBefore, res, err, "callback function")
 		return errorsmod.Wrapf(types.ErrEVMCallFailed, "EVM returned error: %s", err.Error())
 	}
 
 	// Consume the actual gas used on the original callback context.
 	ctx.GasMeter().ConsumeGas(res.GasUsed, "callback function")
-	if ctx.GasMeter().IsOutOfGas() {
+	if ctx.GasMeter().IsPastLimit() {
 		return errorsmod.Wrapf(types.ErrOutOfGas, "out of gas")
 	}
 
 	// Write cachedCtx events back to ctx.
 	writeFn()
 
-	// Check that the sender no longer has tokens after the callback.
+	// Check that the receiver no longer holds the tokens transferred by this packet
+	// after the callback.
 	// NOTE: contracts must implement an IERC20(token).transferFrom(msg.sender, address(this), amount)
 	// for the total amount, or the callback will fail.
 	// This check is here to prevent funds from getting stuck in the isolated address,
 	// since they would become irretrievable.
-	receiverTokenBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex) // here,
-	// we can use the original ctx and skip manually adding the gas
-	if receiverTokenBalance.Cmp(big.NewInt(0)) != 0 {
+	//
+	// The receiver address is derived only from the destination channel and the raw
+	// source sender, so it is reused by later packets with the same inputs. Anyone
+	// can pre-fund the receiver with the packet's token, so the balance is compared
+	// against the pre-callback snapshot minus the packet amount instead of against
+	// zero: only the current packet's funds are required to be consumed, and any
+	// pre-existing balance may remain without persistently failing later callbacks
+	// on the same route.
+	// NOTE: we can use the original ctx and skip manually adding the gas
+	receiverTokenBalance := k.erc20Keeper.BalanceOf(ctx, erc20.ABI, tokenPair.GetERC20Contract(), receiverHex)
+	expectedBalance := new(big.Int).Sub(entryBalance, amountInt.BigInt())
+	if receiverTokenBalance.Cmp(expectedBalance) > 0 {
 		return errorsmod.Wrapf(erc20types.ErrEVMCall,
-			"receiver has %d unrecoverable tokens after callback", receiverTokenBalance)
+			"receiver has %d unrecoverable tokens after callback",
+			new(big.Int).Sub(receiverTokenBalance, expectedBalance))
 	}
 
 	return nil
@@ -326,15 +352,17 @@ func (k ContractKeeper) IBCOnAcknowledgementPacketCallback(
 
 	// Call the onPacketAcknowledgement function in the contract
 	// NOTE: use the cached ctx for the EVM calls.
+	gasBefore := cachedCtx.GasMeter().GasConsumed()
 	res, err := k.evmKeeper.CallEVM(cachedCtx, stateDB, *abi, sender, contractAddr, true, false, math.NewIntFromUint64(cachedCtx.GasMeter().GasRemaining()).BigInt(), "onPacketAcknowledgement",
 		packet.GetSourceChannel(), packet.GetSourcePort(), packet.GetSequence(), packet.GetData(), acknowledgement)
 	if err != nil {
+		consumeFailedCallGas(ctx, cachedCtx, gasBefore, res, err, "callback onPacketAcknowledgement")
 		return errorsmod.Wrapf(types.ErrCallbackFailed, "EVM returned error: %s", err.Error())
 	}
 
 	// Consume the actual gas used on the original callback context.
 	ctx.GasMeter().ConsumeGas(res.GasUsed, "callback onPacketAcknowledgement")
-	if ctx.GasMeter().IsOutOfGas() {
+	if ctx.GasMeter().IsPastLimit() {
 		return errorsmod.Wrapf(types.ErrCallbackFailed, "out of gas")
 	}
 
@@ -425,18 +453,49 @@ func (k ContractKeeper) IBCOnTimeoutPacketCallback(
 		return err
 	}
 
-	res, err := k.evmKeeper.CallEVM(ctx, stateDB, *abi, sender, contractAddr, true, false, math.NewIntFromUint64(cachedCtx.GasMeter().GasRemaining()).BigInt(), "onPacketTimeout",
+	gasBefore := cachedCtx.GasMeter().GasConsumed()
+	res, err := k.evmKeeper.CallEVM(cachedCtx, stateDB, *abi, sender, contractAddr, true, false, math.NewIntFromUint64(cachedCtx.GasMeter().GasRemaining()).BigInt(), "onPacketTimeout",
 		packet.GetSourceChannel(), packet.GetSourcePort(), packet.GetSequence(), packet.GetData())
 	if err != nil {
+		consumeFailedCallGas(ctx, cachedCtx, gasBefore, res, err, "callback onTimeoutPacket")
 		return errorsmod.Wrapf(types.ErrCallbackFailed, "EVM returned error: %s", err.Error())
 	}
 
 	// Consume the actual gas used on the original callback context.
-	ctx.GasMeter().ConsumeGas(res.GasUsed, "callback onPacketAcknowledgement")
-	if ctx.GasMeter().IsOutOfGas() {
+	ctx.GasMeter().ConsumeGas(res.GasUsed, "callback onTimeoutPacket")
+	if ctx.GasMeter().IsPastLimit() {
 		return errorsmod.Wrapf(types.ErrCallbackFailed, "out of gas")
 	}
 
 	writeFn()
 	return nil
+}
+
+// consumeFailedCallGas charges the gas used by a failed EVM call to the callback
+// context. IBC-Go relies on the callback gas meter to detect callbacks that ran
+// out of gas because the relayer supplied less than the commit gas limit, so the
+// gas burned by a reverted or out-of-gas call must not be dropped.
+//
+// gasBefore is the gas consumed on the cachedCtx gas meter before the failed call,
+// so that gas already charged to ctx for earlier calls is not charged twice.
+func consumeFailedCallGas(ctx, cachedCtx sdk.Context, gasBefore uint64, res *evmtypes.MsgEthereumTxResponse, err error, descriptor string) {
+	switch {
+	case res != nil && res.VmError != vm.ErrOutOfGas.Error():
+		ctx.GasMeter().ConsumeGas(res.GasUsed, descriptor)
+	case res != nil, errors.Is(err, core.ErrIntrinsicGas), errors.Is(err, core.ErrFloorDataGas):
+		// The EVM ran out of gas, or the call gas limit does not cover the
+		// intrinsic or floor data gas. The gas used can equal the gas remaining
+		// on the callback context, which leaves its meter at but not past the
+		// limit, so push the callback gas meter past its limit for IBC-Go to
+		// treat this as an out of gas callback.
+		if remaining := ctx.GasMeter().GasRemaining(); remaining < gomath.MaxUint64 {
+			ctx.GasMeter().ConsumeGas(remaining+1, descriptor)
+		}
+	default:
+		// Post-execution failures (e.g. StateDB commit errors) return no response
+		// but still charge the EVM gas used to the cachedCtx gas meter.
+		if consumed := cachedCtx.GasMeter().GasConsumed(); consumed > gasBefore {
+			ctx.GasMeter().ConsumeGas(consumed-gasBefore, descriptor)
+		}
+	}
 }

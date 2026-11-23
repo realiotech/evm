@@ -76,6 +76,9 @@ func (p Precompile) runNativeAction(evm *vm.EVM, contract *vm.Contract, action N
 	// add precompileCall entry on the stateDB journal
 	// this allows to revert the changes within an evm tx
 	if err := stateDB.AddPrecompileFn(snapshot); err != nil {
+		// the rejected call has no journal entry to revert this snapshot later,
+		// so drop it now to avoid leaking a cache layer until the tx commits
+		stateDB.RevertMultiStore(snapshot)
 		return nil, err
 	}
 
@@ -108,14 +111,18 @@ func (p Precompile) runNativeAction(evm *vm.EVM, contract *vm.Contract, action N
 	}
 
 	bz, err = action(ctx)
-	if err != nil {
-		return bz, err
-	}
 
+	// charge the gas consumed by the native action on every exit path, so that
+	// a failing action cannot hand its unused gas back to the caller after
+	// performing arbitrary work (e.g. nested EVM calls).
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
 	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
+	}
+
+	if err != nil {
+		return bz, err
 	}
 
 	if balanceHandler != nil {
@@ -169,6 +176,12 @@ func SetupABI(
 	// if the method type is `function` continue looking for arguments
 	if method.Type == abi.Function {
 		argsBz := contract.Input[4:]
+		// reject inputs whose decoded representation would expand beyond the
+		// encoded size (e.g. repeated offsets aliasing one dynamic tail) before
+		// the decoder materializes it
+		if err := CheckABIInputSize(method.Inputs, argsBz); err != nil {
+			return nil, nil, err
+		}
 		args, err = method.Inputs.Unpack(argsBz)
 		if err != nil {
 			return nil, nil, err

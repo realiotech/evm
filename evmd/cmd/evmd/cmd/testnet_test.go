@@ -1,10 +1,31 @@
 package cmd
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/cosmos/cosmos-sdk/x/genutil"
+	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 )
+
+func TestSetDefaultBlockMaxGas(t *testing.T) {
+	genFile := filepath.Join(t.TempDir(), "genesis.json")
+	require.NoError(t, genutil.ExportGenesisFileWithTime(genFile, "test-1", nil, json.RawMessage("{}"), time.Now()))
+
+	appGenesis, err := genutiltypes.AppGenesisFromFile(genFile)
+	require.NoError(t, err)
+	require.Equal(t, int64(-1), appGenesis.Consensus.Params.Block.MaxGas)
+
+	require.NoError(t, setDefaultBlockMaxGas(genFile))
+
+	appGenesis, err = genutiltypes.AppGenesisFromFile(genFile)
+	require.NoError(t, err)
+	require.Equal(t, int64(60_000_000), appGenesis.Consensus.Params.Block.MaxGas)
+}
 
 func TestParseValidatorPowers(t *testing.T) {
 	tests := []struct {

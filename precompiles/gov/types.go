@@ -1,7 +1,9 @@
 package gov
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -111,6 +113,12 @@ type TallyResultData struct {
 	NoWithVeto string
 }
 
+// errInvalidProposalMessage is returned for any proposal message that fails to
+// decode. It is a sentinel error with fixed text because it becomes the
+// precompile's revert data, and decoder error text is not guaranteed to be
+// identical on every validator.
+var errInvalidProposalMessage = errors.New("invalid proposal message")
+
 // NewMsgSubmitProposal constructs a MsgSubmitProposal.
 // args: [proposerAddress, jsonBlob, []cmn.CoinInput deposit]
 func NewMsgSubmitProposal(args []interface{}, cdc codec.Codec, addrCdc address.Codec) (*govv1.MsgSubmitProposal, common.Address, error) {
@@ -162,9 +170,13 @@ func NewMsgSubmitProposal(args []interface{}, cdc codec.Codec, addrCdc address.C
 	// 2. Decode each message
 	msgs := make([]sdk.Msg, len(prop.Messages))
 	for i, m := range prop.Messages {
+		// Require canonical JSON, since jsonpb resolves multiple set oneof members nondeterministically.
 		var msg sdk.Msg
 		if err := cdc.UnmarshalInterfaceJSON(m, &msg); err != nil {
-			return nil, emptyAddr, sdkerrors.Wrapf(err, "message %d", i)
+			return nil, emptyAddr, sdkerrors.Wrapf(errInvalidProposalMessage, "message %d", i)
+		}
+		if bz, err := cdc.MarshalInterfaceJSON(msg); err != nil || !bytes.Equal(bz, m) {
+			return nil, emptyAddr, sdkerrors.Wrapf(errInvalidProposalMessage, "message %d", i)
 		}
 		msgs[i] = msg
 	}

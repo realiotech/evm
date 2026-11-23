@@ -417,6 +417,41 @@ func (k Keeper) AddTransientGasUsed(ctx sdk.Context, gasUsed uint64) (uint64, er
 	return result, nil
 }
 
+// SetAnteVerifiedSender records that the EVM ante handler verified and charged
+// the Ethereum tx with the given hash, in the tx the context is delivering, on
+// behalf of the given sender.
+func (k Keeper) SetAnteVerifiedSender(ctx sdk.Context, ethTxHash common.Hash, verifiedSender common.Address) {
+	transientStore := ctx.TransientStore(k.transientKey)
+	anteVerifiedSenderKey := types.TransientAnteVerifiedSenderKey(ctx.TxBytes(), ethTxHash)
+
+	transientStore.Set(anteVerifiedSenderKey, verifiedSender.Bytes())
+}
+
+// ConsumeAnteVerifiedSender returns the sender the EVM ante handler verified
+// for the Ethereum tx with the given hash in the tx the context is delivering,
+// and removes the record. It reports false when no sender is recorded.
+func (k Keeper) ConsumeAnteVerifiedSender(ctx sdk.Context, ethTxHash common.Hash) (common.Address, bool) {
+	transientStore := ctx.TransientStore(k.transientKey)
+
+	// The key includes the hash of the Cosmos tx being delivered, because
+	// removing the record below is rolled back when the message fails while the
+	// ante handler's write is kept. A record left behind that way must not let a
+	// later tx in the block execute the same Ethereum tx. The EVM tx index can't
+	// tell the two txs apart, since a failed message doesn't advance it.
+	anteVerifiedSenderKey := types.TransientAnteVerifiedSenderKey(ctx.TxBytes(), ethTxHash)
+
+	verifiedSenderBytes := transientStore.Get(anteVerifiedSenderKey)
+	if verifiedSenderBytes == nil {
+		return common.Address{}, false
+	}
+
+	// The record is single use: one pass through the ante handler pays for
+	// one execution, so a second delivery of the same tx finds nothing.
+	transientStore.Delete(anteVerifiedSenderKey)
+
+	return common.BytesToAddress(verifiedSenderBytes), true
+}
+
 // KVStoreKeys returns KVStore keys injected to keeper
 func (k Keeper) KVStoreKeys() map[string]*storetypes.KVStoreKey {
 	return k.storeKeys

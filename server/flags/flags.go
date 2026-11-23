@@ -61,6 +61,8 @@ const (
 	// Set to `metrics` which is hardcoded flag from go-ethereum.
 	// https://github.com/ethereum/go-ethereum/blob/master/metrics/metrics.go#L35-L55
 	JSONRPCEnableMetrics = "metrics"
+	// JSONRPCEnableCustomJSTracers allows trace queries to evaluate custom JavaScript tracer code.
+	JSONRPCEnableCustomJSTracers = "json-rpc.enable-custom-js-tracers"
 )
 
 // EVM flags

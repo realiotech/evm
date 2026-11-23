@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/cosmos/evm/x/vm/statedb"
+	"github.com/cosmos/evm/x/vm/types"
 	"github.com/cosmos/evm/x/vm/types/mocks"
 
 	storetypes "cosmossdk.io/store/types"
@@ -577,7 +578,7 @@ func (suite *StateDBTestSuite) TestAccessList() {
 				IsEIP2929:        true,
 				IsPrague:         true,
 			}
-			db.Prepare(rules, address, common.Address{}, &address2, vm.PrecompiledAddressesPrague, al)
+			db.Prepare(rules, address, common.Address{}, &address2, vm.PrecompiledAddressesOsaka, al)
 
 			// check sender and dst
 			suite.Require().True(db.AddressInAccessList(address))
@@ -636,6 +637,44 @@ func (suite *StateDBTestSuite) TestLog() {
 	suite.Require().Equal(2, len(db.Logs()))
 	expecedLog.Index++
 	suite.Require().Equal(expecedLog, db.Logs()[1])
+}
+
+func (suite *StateDBTestSuite) TestLogLimits() {
+	suite.Run("log count", func() {
+		db := statedb.New(newTestCtx(), mocks.NewEVMKeeper(), emptyTxConfig)
+		for i := 0; i < types.MaxLogsPerTx; i++ {
+			db.AddLog(&ethtypes.Log{Address: address})
+		}
+		suite.Require().NoError(db.LogLimitError())
+		suite.Require().Len(db.Logs(), types.MaxLogsPerTx)
+
+		db.AddLog(&ethtypes.Log{Address: address})
+		suite.Require().ErrorContains(db.LogLimitError(), "max number of logs")
+		suite.Require().Len(db.Logs(), types.MaxLogsPerTx)
+	})
+
+	suite.Run("log data size", func() {
+		db := statedb.New(newTestCtx(), mocks.NewEVMKeeper(), emptyTxConfig)
+
+		// reverted logs do not count towards the limit
+		snapshot := db.Snapshot()
+		db.AddLog(&ethtypes.Log{Address: address, Data: make([]byte, types.MaxLogDataBytesPerTx)})
+		db.RevertToSnapshot(snapshot)
+		suite.Require().Empty(db.Logs())
+
+		db.AddLog(&ethtypes.Log{Address: address, Data: make([]byte, types.MaxLogDataBytesPerTx-1)})
+		db.AddLog(&ethtypes.Log{Address: address, Data: make([]byte, 1)})
+		suite.Require().NoError(db.LogLimitError())
+		suite.Require().Len(db.Logs(), 2)
+
+		db.AddLog(&ethtypes.Log{Address: address, Data: make([]byte, 1)})
+		suite.Require().ErrorContains(db.LogLimitError(), "max log data size")
+		suite.Require().Len(db.Logs(), 2)
+
+		// the error is sticky and later logs are dropped
+		db.AddLog(&ethtypes.Log{Address: address})
+		suite.Require().Len(db.Logs(), 2)
+	})
 }
 
 func (suite *StateDBTestSuite) TestRefund() {

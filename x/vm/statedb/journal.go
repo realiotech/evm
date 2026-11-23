@@ -276,6 +276,7 @@ func (ch refundChange) Dirtied() *common.Address {
 }
 
 func (ch addLogChange) Revert(s *StateDB) {
+	s.logsDataSize -= len(s.logs[len(s.logs)-1].Data)
 	s.logs = s.logs[:len(s.logs)-1]
 }
 

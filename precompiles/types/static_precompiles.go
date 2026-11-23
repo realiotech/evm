@@ -13,7 +13,6 @@ import (
 	distprecompile "github.com/cosmos/evm/precompiles/distribution"
 	govprecompile "github.com/cosmos/evm/precompiles/gov"
 	ics20precompile "github.com/cosmos/evm/precompiles/ics20"
-	"github.com/cosmos/evm/precompiles/p256"
 	slashingprecompile "github.com/cosmos/evm/precompiles/slashing"
 	stakingprecompile "github.com/cosmos/evm/precompiles/staking"
 	erc20Keeper "github.com/cosmos/evm/x/erc20/keeper"
@@ -33,14 +32,8 @@ func NewStaticPrecompiles() StaticPrecompiles {
 	return make(StaticPrecompiles)
 }
 
-func (s StaticPrecompiles) WithPraguePrecompiles() StaticPrecompiles {
-	maps.Copy(s, vm.PrecompiledContractsPrague)
-	return s
-}
-
-func (s StaticPrecompiles) WithP256Precompile() StaticPrecompiles {
-	p256Precompile := &p256.Precompile{}
-	s[p256Precompile.Address()] = p256Precompile
+func (s StaticPrecompiles) WithOsakaPrecompiles() StaticPrecompiles {
+	maps.Copy(s, vm.PrecompiledContractsOsaka)
 	return s
 }
 
