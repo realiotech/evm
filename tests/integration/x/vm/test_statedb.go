@@ -1558,6 +1558,7 @@ func (s *KeeperTestSuite) TestSetBalanceBlockedNonModuleArm() {
 
 			baseAcc := authtypes.NewBaseAccountWithAddress(cosmosAddr)
 			accKeeper.On("GetAccount", mock.Anything, cosmosAddr).Return(baseAcc)
+			accKeeper.On("GetModulePermissions").Return(map[string]authtypes.PermissionsForAddress{})
 			bankKeeper.On("LockedCoins", mock.Anything, cosmosAddr).Return(sdk.Coins{})
 			bankKeeper.On("GetBalance", mock.Anything, cosmosAddr, extDenom).
 				Return(sdk.Coin{Denom: extDenom, Amount: tc.current})
